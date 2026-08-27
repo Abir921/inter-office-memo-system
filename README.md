@@ -59,6 +59,24 @@ npm run dev
 | `npm run lint` | ESLint |
 | `npm run db:studio` | Browse the database in a local GUI |
 | `npm run db:push` | Sync schema without creating a migration (dev only) |
+| `npm run verify` | Security checks: tenant isolation, turn order, XSS, uploads |
+| `npm run check` | Typecheck + lint. Safe to run while `npm run dev` is going |
+| `npm run clean` | Delete the `.next` build cache. **Stop the dev server first** |
+
+### If you see "Cannot find module './1331.js'"
+
+The `.next` folder holds a stale or half-written build. `npm run dev` and
+`npm run build` share that folder, so running a production build while the dev
+server is going will corrupt it.
+
+Stop the dev server (Ctrl+C), then:
+
+```bash
+npm run clean
+npm run dev
+```
+
+Use `npm run check` rather than `npm run build` when the dev server is running.
 
 ---
 

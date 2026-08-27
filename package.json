@@ -13,7 +13,9 @@
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "verify": "tsx scripts/verify-security.ts"
+    "verify": "tsx scripts/verify-security.ts",
+    "check": "tsc --noEmit && eslint",
+    "clean": "node -e \"require('fs').rmSync('.next',{recursive:true,force:true})\""
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
