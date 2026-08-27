@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import type { StepActionType } from '@prisma/client'
+import { Attachments } from '@/components/app/attachments'
 import { CommentForm } from '@/components/app/comment-form'
 import { RoutingRail, type RailStep } from '@/components/app/routing-rail'
 import { PriorityChip, StatusBadge } from '@/components/app/status-badge'
@@ -150,14 +151,18 @@ export default async function MemoDetailPage({
     })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime())
 
+  const currentStep = steps.find((s) => s.id === memo.currentStepId)
+
   const participantIds = new Set(steps.map((s) => s.assigneeId))
+  const isAuthor = memo.authorId === user.id
+
+  // Attachments and edits are the author's, and only while the memo is still
+  // with them. Once it is routed it belongs to the record.
+  const canEdit = isAuthor && (memo.status === 'DRAFT' || memo.status === 'CHANGES_REQUESTED')
+
   const mayComment =
     memo.status !== 'DRAFT' &&
-    (memo.authorId === user.id || participantIds.has(user.id) || isAdmin(user))
-
-  const isAuthor = memo.authorId === user.id
-  const canEdit = isAuthor && (memo.status === 'DRAFT' || memo.status === 'CHANGES_REQUESTED')
-  const currentStep = steps.find((s) => s.id === memo.currentStepId)
+    (isAuthor || participantIds.has(user.id) || isAdmin(user))
 
   const toneClass = {
     ink: 'text-ink',
@@ -243,26 +248,7 @@ export default async function MemoDetailPage({
       </section>
 
       {/* ---- Attachments ---- */}
-      {attachments.length > 0 ? (
-        <section>
-          <h2 className="text-sm font-semibold">Attachments</h2>
-          <ul className="mt-3 divide-y divide-rule overflow-hidden rounded-sm border border-rule bg-card">
-            {attachments.map((file) => (
-              <li key={file.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 p-3">
-                <a
-                  href={'/api/attachments/' + file.id + '/download'}
-                  className="min-w-0 flex-1 truncate text-sm text-ink underline-offset-4 hover:underline"
-                >
-                  {file.fileName}
-                </a>
-                <span className="font-data text-[11px] text-muted">
-                  {file.uploadedBy.name} · {stamp(file.uploadedAt)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
+      <Attachments memoId={memo.id} attachments={attachments} canEdit={canEdit} />
 
       {/* ---- The routing slip: the centrepiece ---- */}
       <section>

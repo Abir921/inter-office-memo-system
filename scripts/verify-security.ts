@@ -15,7 +15,9 @@ import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { addComment } from '../lib/comment'
 import { deleteDraft, updateMemo } from '../lib/memo'
+import { resolveDownload } from '../lib/attachment'
 import { sanitizeMemoBody } from '../lib/sanitize'
+import { StorageError, validateUpload } from '../lib/storage'
 import { scoped, type TenantContext } from '../lib/tenant'
 import {
   WorkflowError,
@@ -26,6 +28,9 @@ import {
 } from '../lib/workflow'
 
 const prisma = new PrismaClient()
+
+const ALLOWED_XLSX =
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 
 let passed = 0
 let failed = 0
@@ -498,6 +503,89 @@ async function main() {
           'Nosy comment.',
         ),
     )
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\n8. ATTACHMENT VALIDATION')
+  // -------------------------------------------------------------------------
+  //
+  // Extension AND declared MIME type must agree on an allowlisted pair. An
+  // extension is trivially renamed; a MIME type is supplied by the client.
+  // Either alone is worthless.
+
+  const makeFile = (name: string, type: string, bytes: number) =>
+    new File([new Uint8Array(bytes)], name, { type })
+
+  function expectRejected(label: string, file: File) {
+    try {
+      validateUpload(file)
+      check(label, false, 'the upload was ACCEPTED')
+    } catch (error) {
+      check(label, error instanceof StorageError, error instanceof StorageError ? '' : String(error))
+    }
+  }
+
+  expectRejected(
+    'An executable is refused',
+    makeFile('payload.exe', 'application/x-msdownload', 1024),
+  )
+  expectRejected('A script file is refused', makeFile('run.sh', 'text/x-shellscript', 64))
+  expectRejected('An HTML file is refused', makeFile('page.html', 'text/html', 64))
+  expectRejected('An SVG is refused (it can carry script)', makeFile('logo.svg', 'image/svg+xml', 64))
+  expectRejected('An empty file is refused', makeFile('empty.pdf', 'application/pdf', 0))
+  expectRejected(
+    'A file over 10 MB is refused',
+    makeFile('big.pdf', 'application/pdf', 10 * 1024 * 1024 + 1),
+  )
+  expectRejected(
+    'A .pdf whose declared type is not a PDF is refused',
+    makeFile('trojan.pdf', 'text/html', 1024),
+  )
+  expectRejected('A file with no extension is refused', makeFile('README', 'text/plain', 64))
+  expectRejected(
+    'A double extension does not smuggle anything through',
+    makeFile('invoice.pdf.exe', 'application/pdf', 1024),
+  )
+
+  try {
+    const ok = validateUpload(makeFile('budget.xlsx', ALLOWED_XLSX, 2048))
+    check('A genuine .xlsx is accepted', ok.sizeBytes === 2048)
+  } catch (error) {
+    check('A genuine .xlsx is accepted', false, String(error))
+  }
+
+  try {
+    // A client can send a path; only the final segment may ever be kept.
+    const traversal = validateUpload(
+      makeFile('../../../etc/passwd.txt', 'text/plain', 32),
+    )
+    check(
+      'A path in the filename is stripped to its last segment',
+      traversal.fileName === 'passwd.txt',
+      'got "' + traversal.fileName + '"',
+    )
+  } catch (error) {
+    check('A path in the filename is stripped to its last segment', false, String(error))
+  }
+
+  // Cross-tenant download denial, when there is an attachment to try it on.
+  const anyAttachment = await prisma.attachment.findFirst({
+    where: { organizationId: northwind.id, isDeleted: false },
+    select: { id: true },
+  })
+
+  if (anyAttachment) {
+    await expectWorkflowError(
+      'Beacon cannot obtain a download URL for a Northwind attachment',
+      'NOT_FOUND',
+      () =>
+        resolveDownload(
+          { organizationId: beacon.id, userId: sara.id, role: sara.role },
+          anyAttachment.id,
+        ),
+    )
+  } else {
+    console.log('  SKIP  cross-tenant attachment download (no attachments seeded yet)')
   }
 
   console.log('\n' + '-'.repeat(64))
