@@ -37,22 +37,41 @@ const newRow = (): Participant => ({
   positionLabel: '',
 })
 
+export interface ExistingMemo {
+  id: string
+  memoNumber: string
+  subject: string
+  bodyHtml: string
+  departmentId: string | null
+  categoryId: string | null
+  priority: string
+  status: string
+}
+
 export function MemoComposer({
   people,
   departments,
   categories,
   templates,
   defaultDepartmentId,
+  existing,
 }: {
   people: PersonOption[]
   departments: Option[]
   categories: Option[]
   templates: TemplateOption[]
   defaultDepartmentId: string | null
+  /** Present when editing a draft or revising a memo sent back for changes. */
+  existing?: ExistingMemo
 }) {
   const router = useRouter()
 
-  const [bodyHtml, setBodyHtml] = useState('')
+  const isEditing = Boolean(existing)
+  // A memo handed back for changes is revised and RESUBMITTED, not submitted
+  // fresh; a draft can still be saved without routing it anywhere.
+  const isRevision = existing?.status === 'CHANGES_REQUESTED'
+
+  const [bodyHtml, setBodyHtml] = useState(existing?.bodyHtml ?? '')
   const [participants, setParticipants] = useState<Participant[]>([newRow()])
   const [templateId, setTemplateId] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -95,45 +114,78 @@ export function MemoComposer({
 
     const filled = participants.filter((p) => p.assigneeId)
 
-    if (mode === 'submit' && filled.length === 0) {
+    if (mode === 'submit' && !isRevision && filled.length === 0) {
       setError('Add at least one approver before submitting, or save this as a draft.')
       setPending(null)
       return
     }
 
-    const payload = {
+    const fields = {
       subject: String(data.get('subject') ?? ''),
       bodyHtml,
       departmentId: String(data.get('departmentId') ?? ''),
       categoryId: String(data.get('categoryId') ?? ''),
-      templateId: mode === 'submit' ? templateId : '',
       priority: String(data.get('priority') ?? 'NORMAL'),
-      ...(mode === 'submit'
-        ? {
-            participants: filled.map((p, index) => ({
-              position: index + 1,
-              assigneeId: p.assigneeId,
-              positionLabel: p.positionLabel,
-            })),
-          }
-        : {}),
+    }
+
+    const routing = filled.map((p, index) => ({
+      position: index + 1,
+      assigneeId: p.assigneeId,
+      positionLabel: p.positionLabel,
+    }))
+
+    function fail(body: { error?: string; fields?: Record<string, string> }) {
+      setError(body.error ?? 'The memo was not saved. Check the form and try again.')
+      if (body.fields) setFieldErrors(body.fields)
+      setPending(null)
     }
 
     try {
+      if (existing) {
+        // Save the edits first. Both the draft path and the revision path need
+        // the new text stored before anything is routed.
+        const patch = await fetch('/api/memos/' + existing.id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(fields),
+        })
+
+        if (!patch.ok) return fail(await patch.json().catch(() => ({})))
+
+        if (mode === 'submit') {
+          const endpoint = isRevision ? '/resubmit' : '/submit'
+          const send = await fetch('/api/memos/' + existing.id + endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+              isRevision
+                // Omitting participants reuses the previous routing, which is
+                // what an author almost always wants after a revision.
+                ? (routing.length > 0 ? { participants: routing } : {})
+                : { participants: routing, templateId },
+            ),
+          })
+
+          if (!send.ok) return fail(await send.json().catch(() => ({})))
+        }
+
+        router.push('/memos/' + existing.id)
+        router.refresh()
+        return
+      }
+
       const response = await fetch('/api/memos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          ...fields,
+          templateId: mode === 'submit' ? templateId : '',
+          ...(mode === 'submit' ? { participants: routing } : {}),
+        }),
       })
 
       const body = await response.json().catch(() => ({}))
-
-      if (!response.ok) {
-        setError(body.error ?? 'The memo was not saved. Check the form and try again.')
-        if (body.fields) setFieldErrors(body.fields)
-        setPending(null)
-        return
-      }
+      if (!response.ok) return fail(body)
 
       router.push('/memos/' + body.id)
       router.refresh()
@@ -164,6 +216,7 @@ export function MemoComposer({
             id="subject"
             name="subject"
             maxLength={200}
+            defaultValue={existing?.subject}
             placeholder="Request for two additional development workstations"
             aria-invalid={Boolean(fieldErrors.subject)}
             required
@@ -175,7 +228,11 @@ export function MemoComposer({
             Body<span className="ml-0.5 text-stamp">*</span>
           </Label>
           <div className="mt-1.5" id="body-editor">
-            <MemoEditor name="bodyHtml" onChange={setBodyHtml} />
+            <MemoEditor
+              name="bodyHtml"
+              defaultValue={existing?.bodyHtml ?? ''}
+              onChange={setBodyHtml}
+            />
           </div>
           {fieldErrors.bodyHtml ? (
             <p className="mt-1.5 text-xs text-stamp">{fieldErrors.bodyHtml}</p>
@@ -184,7 +241,11 @@ export function MemoComposer({
 
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Department" htmlFor="departmentId" error={fieldErrors.departmentId}>
-            <Select id="departmentId" name="departmentId" defaultValue={defaultDepartmentId ?? ''}>
+            <Select
+              id="departmentId"
+              name="departmentId"
+              defaultValue={existing?.departmentId ?? defaultDepartmentId ?? ''}
+            >
               <option value="">Not specified</option>
               {departments.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -195,7 +256,7 @@ export function MemoComposer({
           </Field>
 
           <Field label="Category" htmlFor="categoryId" error={fieldErrors.categoryId}>
-            <Select id="categoryId" name="categoryId" defaultValue="">
+            <Select id="categoryId" name="categoryId" defaultValue={existing?.categoryId ?? ''}>
               <option value="">Not specified</option>
               {categories.map((c) => (
                 <option key={c.id} value={c.id}>
@@ -206,7 +267,7 @@ export function MemoComposer({
           </Field>
 
           <Field label="Priority" htmlFor="priority" error={fieldErrors.priority}>
-            <Select id="priority" name="priority" defaultValue="NORMAL">
+            <Select id="priority" name="priority" defaultValue={existing?.priority ?? 'NORMAL'}>
               <option value="NORMAL">Normal</option>
               <option value="HIGH">High</option>
               <option value="URGENT">Urgent</option>
@@ -221,8 +282,9 @@ export function MemoComposer({
           <div>
             <h2 className="text-sm font-semibold">Routing</h2>
             <p className="mt-1 text-xs text-muted">
-              The desks this memo must cross, in order. Each person may act only when the
-              memo reaches them.
+              {isRevision
+                ? 'Leave this alone to send the memo back along the same route. Naming people here replaces the routing instead.'
+                : 'The desks this memo must cross, in order. Each person may act only when the memo reaches them.'}
             </p>
           </div>
 
@@ -356,7 +418,13 @@ export function MemoComposer({
 
       <div className="flex flex-wrap gap-3 border-t border-rule pt-6">
         <Button type="submit" size="lg" disabled={pending !== null}>
-          {pending === 'submit' ? 'Submitting…' : 'Submit memo'}
+          {pending === 'submit'
+            ? isRevision
+              ? 'Resubmitting…'
+              : 'Submitting…'
+            : isRevision
+              ? 'Resubmit memo'
+              : 'Submit memo'}
         </Button>
 
         <Button
@@ -366,13 +434,14 @@ export function MemoComposer({
           disabled={pending !== null}
           onClick={(e) => save('draft', e.currentTarget.form as HTMLFormElement)}
         >
-          {pending === 'draft' ? 'Saving…' : 'Save as draft'}
+          {pending === 'draft' ? 'Saving…' : isEditing ? 'Save changes' : 'Save as draft'}
         </Button>
       </div>
 
       <p className="text-xs text-muted">
-        A draft stays private to you. Submitting sends it to the first desk on the list
-        and locks the memo against further editing.
+        {isRevision
+          ? 'Resubmitting records a new version and starts the routing again at the first desk. The earlier round of decisions stays on the record.'
+          : 'A draft stays private to you. Submitting sends it to the first desk on the list and locks the memo against further editing.'}
       </p>
     </form>
   )

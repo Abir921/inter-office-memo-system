@@ -100,13 +100,13 @@ export function scoped(ctx: TenantContext) {
           where: { ...args?.where, ...where },
         } as Prisma.DepartmentFindManyArgs) as Promise<Array<Prisma.DepartmentGetPayload<T>>>,
 
-      findById: <T extends Omit<Prisma.DepartmentFindFirstArgs, 'where'>>(
+      findById: <T extends Prisma.DepartmentFindFirstArgs>(
         id: string,
         args?: T,
       ): Promise<Prisma.DepartmentGetPayload<T> | null> =>
         prisma.department.findFirst({
           ...args,
-          where: { id, ...where },
+          where: { ...args?.where, id, ...where },
         } as Prisma.DepartmentFindFirstArgs) as Promise<Prisma.DepartmentGetPayload<T> | null>,
 
       count: (w?: Prisma.DepartmentWhereInput) =>
@@ -128,13 +128,13 @@ export function scoped(ctx: TenantContext) {
           where: { ...args?.where, ...where },
         } as Prisma.UserFindManyArgs) as Promise<Array<Prisma.UserGetPayload<T>>>,
 
-      findById: <T extends Omit<Prisma.UserFindFirstArgs, 'where'>>(
+      findById: <T extends Prisma.UserFindFirstArgs>(
         id: string,
         args?: T,
       ): Promise<Prisma.UserGetPayload<T> | null> =>
         prisma.user.findFirst({
           ...args,
-          where: { id, ...where },
+          where: { ...args?.where, id, ...where },
         } as Prisma.UserFindFirstArgs) as Promise<Prisma.UserGetPayload<T> | null>,
 
       findByEmail: (email: string) =>
@@ -191,13 +191,13 @@ export function scoped(ctx: TenantContext) {
           Array<Prisma.WorkflowTemplateGetPayload<T>>
         >,
 
-      findById: <T extends Omit<Prisma.WorkflowTemplateFindFirstArgs, 'where'>>(
+      findById: <T extends Prisma.WorkflowTemplateFindFirstArgs>(
         id: string,
         args?: T,
       ): Promise<Prisma.WorkflowTemplateGetPayload<T> | null> =>
         prisma.workflowTemplate.findFirst({
           ...args,
-          where: { id, ...where },
+          where: { ...args?.where, id, ...where },
         } as Prisma.WorkflowTemplateFindFirstArgs) as Promise<
           Prisma.WorkflowTemplateGetPayload<T> | null
         >,
@@ -219,13 +219,13 @@ export function scoped(ctx: TenantContext) {
           where: { ...args?.where, ...where },
         } as Prisma.MemoFindManyArgs) as Promise<Array<Prisma.MemoGetPayload<T>>>,
 
-      findById: <T extends Omit<Prisma.MemoFindFirstArgs, 'where'>>(
+      findById: <T extends Prisma.MemoFindFirstArgs>(
         id: string,
         args?: T,
       ): Promise<Prisma.MemoGetPayload<T> | null> =>
         prisma.memo.findFirst({
           ...args,
-          where: { id, ...where },
+          where: { ...args?.where, id, ...where },
         } as Prisma.MemoFindFirstArgs) as Promise<Prisma.MemoGetPayload<T> | null>,
 
       count: (w?: Prisma.MemoWhereInput) => prisma.memo.count({ where: { ...w, ...where } }),
@@ -247,13 +247,13 @@ export function scoped(ctx: TenantContext) {
           where: { ...args?.where, ...where },
         } as Prisma.WorkflowStepFindManyArgs) as Promise<Array<Prisma.WorkflowStepGetPayload<T>>>,
 
-      findById: <T extends Omit<Prisma.WorkflowStepFindFirstArgs, 'where'>>(
+      findById: <T extends Prisma.WorkflowStepFindFirstArgs>(
         id: string,
         args?: T,
       ): Promise<Prisma.WorkflowStepGetPayload<T> | null> =>
         prisma.workflowStep.findFirst({
           ...args,
-          where: { id, ...where },
+          where: { ...args?.where, id, ...where },
         } as Prisma.WorkflowStepFindFirstArgs) as Promise<
           Prisma.WorkflowStepGetPayload<T> | null
         >,
@@ -328,13 +328,13 @@ export function scoped(ctx: TenantContext) {
           where: { ...args?.where, ...where },
         } as Prisma.AttachmentFindManyArgs) as Promise<Array<Prisma.AttachmentGetPayload<T>>>,
 
-      findById: <T extends Omit<Prisma.AttachmentFindFirstArgs, 'where'>>(
+      findById: <T extends Prisma.AttachmentFindFirstArgs>(
         id: string,
         args?: T,
       ): Promise<Prisma.AttachmentGetPayload<T> | null> =>
         prisma.attachment.findFirst({
           ...args,
-          where: { id, ...where },
+          where: { ...args?.where, id, ...where },
         } as Prisma.AttachmentFindFirstArgs) as Promise<Prisma.AttachmentGetPayload<T> | null>,
 
       create: (data: Omit<Prisma.AttachmentUncheckedCreateInput, 'organizationId'>) =>
