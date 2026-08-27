@@ -77,3 +77,41 @@ h1, h2, h3, h4 {
     scroll-behavior: auto !important;
   }
 }
+
+/* Rich-text memo bodies. The markup is sanitized before storage, so this
+   only has to make the allowed tags read well on paper. */
+.memo-body :where(p) { margin-block: 0.75em; }
+.memo-body :where(h1) { font-size: 1.25rem; margin-block: 1.2em 0.5em; }
+.memo-body :where(h2) { font-size: 1.1rem; margin-block: 1.2em 0.5em; }
+.memo-body :where(h3) { font-size: 1rem; margin-block: 1.1em 0.4em; }
+.memo-body :where(ul, ol) { margin-block: 0.75em; padding-inline-start: 1.4em; }
+.memo-body :where(ul) { list-style: disc; }
+.memo-body :where(ol) { list-style: decimal; }
+.memo-body :where(li) { margin-block: 0.25em; }
+.memo-body :where(a) { color: var(--ink); text-decoration: underline; text-underline-offset: 2px; }
+.memo-body :where(blockquote) {
+  margin-block: 1em;
+  padding-inline-start: 1em;
+  border-inline-start: 2px solid var(--rule);
+  color: var(--muted);
+}
+.memo-body :where(code) {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-size: 0.9em;
+  background: var(--wash);
+  padding: 0.1em 0.3em;
+  border-radius: 2px;
+}
+.memo-body :where(pre) {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  background: var(--wash);
+  padding: 0.9em;
+  border-radius: 2px;
+  overflow-x: auto;
+  margin-block: 1em;
+}
+.memo-body :where(hr) { border: 0; border-top: 1px solid var(--rule); margin-block: 1.5em; }
+.memo-body :where(table) { width: 100%; border-collapse: collapse; margin-block: 1em; }
+.memo-body :where(th, td) { border: 1px solid var(--rule); padding: 0.5em 0.7em; text-align: left; }
+.memo-body :where(th) { background: var(--wash); font-weight: 600; }
+.memo-body :where(strong, b) { font-weight: 600; color: var(--ink); }

@@ -13,6 +13,9 @@
 
 import { PrismaClient } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import { addComment } from '../lib/comment'
+import { deleteDraft, updateMemo } from '../lib/memo'
+import { sanitizeMemoBody } from '../lib/sanitize'
 import { scoped, type TenantContext } from '../lib/tenant'
 import {
   WorkflowError,
@@ -334,6 +337,166 @@ async function main() {
       'A memo sent back for changes keeps its earlier decisions on file',
       priorActions > 0,
       priorActions + ' actions preserved',
+    )
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\n6. RICH-TEXT SANITIZATION (XSS)')
+  // -------------------------------------------------------------------------
+  //
+  // Bodies are cleaned before storage, so what sits in the database is already
+  // safe. These are the payloads that matter.
+
+  const XSS_CASES: [string, string][] = [
+    ['inline script tag', '<p>Hello</p><script>alert(1)</script>'],
+    ['img onerror handler', '<img src=x onerror="alert(1)">'],
+    ['javascript: link', '<a href="javascript:alert(1)">click</a>'],
+    ['svg onload handler', '<svg onload="alert(1)"></svg>'],
+    ['iframe injection', '<iframe src="https://evil.test"></iframe>'],
+    ['event handler on allowed tag', '<p onclick="alert(1)">text</p>'],
+    ['style tag', '<style>body{display:none}</style><p>ok</p>'],
+    ['data: URI link', '<a href="data:text/html,<script>alert(1)</script>">x</a>'],
+    ['form injection', '<form action="https://evil.test"><input name="p"></form>'],
+    ['nested encoded script', '<p><script>alert(String.fromCharCode(88))</script></p>'],
+  ]
+
+  for (const [label, payload] of XSS_CASES) {
+    const clean = sanitizeMemoBody(payload)
+    const dangerous =
+      /<script/i.test(clean) ||
+      /<iframe/i.test(clean) ||
+      /<svg/i.test(clean) ||
+      /<style/i.test(clean) ||
+      /<form/i.test(clean) ||
+      /\son\w+\s*=/i.test(clean) ||
+      /javascript:/i.test(clean) ||
+      /data:text\/html/i.test(clean)
+
+    check('Neutralised: ' + label, !dangerous, dangerous ? 'LEFT: ' + clean : '')
+  }
+
+  check(
+    'Ordinary formatting survives sanitization',
+    sanitizeMemoBody('<p>Please approve <strong>two</strong> workstations.</p>').includes(
+      '<strong>two</strong>',
+    ),
+  )
+
+  check(
+    'A link keeps its href but gains rel=noopener',
+    (() => {
+      const clean = sanitizeMemoBody('<a href="https://example.test">docs</a>')
+      return clean.includes('https://example.test') && clean.includes('noopener')
+    })(),
+  )
+
+  // -------------------------------------------------------------------------
+  console.log('\n7. DRAFT AND COMMENT AUTHORIZATION')
+  // -------------------------------------------------------------------------
+
+  const draft = await prisma.memo.findFirst({
+    where: { organizationId: northwind.id, status: 'DRAFT' },
+  })
+
+  if (draft) {
+    const notTheAuthor = users.find(
+      (u) => u.organizationId === northwind.id && u.id !== draft.authorId,
+    )!
+
+    await expectWorkflowError(
+      'A colleague cannot edit somebody else’s draft',
+      'FORBIDDEN',
+      () =>
+        updateMemo(
+          { id: notTheAuthor.id, organizationId: northwind.id, role: notTheAuthor.role },
+          draft.id,
+          {
+            subject: 'Hijacked',
+            bodyHtml: '<p>Hijacked</p>',
+            departmentId: null,
+            categoryId: null,
+            priority: 'NORMAL',
+          },
+        ),
+    )
+
+    await expectWorkflowError(
+      'A colleague cannot delete somebody else’s draft',
+      'FORBIDDEN',
+      () =>
+        deleteDraft(
+          { id: notTheAuthor.id, organizationId: northwind.id, role: notTheAuthor.role },
+          draft.id,
+        ),
+    )
+
+    await expectWorkflowError(
+      'Beacon cannot reach a Northwind draft at all',
+      'NOT_FOUND',
+      () =>
+        updateMemo({ id: sara.id, organizationId: beacon.id, role: sara.role }, draft.id, {
+          subject: 'Hijacked',
+          bodyHtml: '<p>Hijacked</p>',
+          departmentId: null,
+          categoryId: null,
+          priority: 'NORMAL',
+        }),
+    )
+  }
+
+  await expectWorkflowError(
+    'A submitted memo can no longer be edited by its author',
+    'INVALID_STATE',
+    () =>
+      updateMemo({ id: karim.id, organizationId: northwind.id, role: karim.role }, target.id, {
+        subject: 'Changed after submission',
+        bodyHtml: '<p>Changed</p>',
+        departmentId: null,
+        categoryId: null,
+        priority: 'NORMAL',
+      }),
+  )
+
+  await expectWorkflowError(
+    'A submitted memo cannot be deleted, only cancelled',
+    'INVALID_STATE',
+    () =>
+      deleteDraft({ id: karim.id, organizationId: northwind.id, role: karim.role }, target.id),
+  )
+
+  await expectWorkflowError(
+    'Beacon cannot comment on a Northwind memo',
+    'NOT_FOUND',
+    () =>
+      addComment(
+        { organizationId: beacon.id, userId: sara.id, role: sara.role },
+        target.id,
+        'I should not be able to write this.',
+      ),
+  )
+
+  // An uninvolved colleague in the SAME organization is also refused, and told
+  // nothing about whether the memo exists.
+  const uninvolved = await prisma.user.findFirst({
+    where: {
+      organizationId: northwind.id,
+      role: 'USER',
+      id: { notIn: [target.authorId, ...(await prisma.workflowStep.findMany({
+        where: { memoId: target.id }, select: { assigneeId: true },
+      })).map((s) => s.assigneeId)] },
+    },
+  })
+
+  if (uninvolved) {
+    await expectWorkflowError(
+      'An uninvolved colleague cannot comment, and gets NOT_FOUND',
+      'NOT_FOUND',
+      () =>
+        addComment(
+          { organizationId: northwind.id, userId: uninvolved.id, role: uninvolved.role },
+          target.id,
+          'Nosy comment.',
+        ),
     )
   }
 
