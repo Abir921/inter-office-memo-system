@@ -12,7 +12,8 @@
     "seed": "tsx prisma/seed.ts",
     "db:push": "prisma db push",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "verify": "tsx scripts/verify-security.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
