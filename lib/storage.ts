@@ -52,8 +52,20 @@ export class StorageError extends Error {
   }
 }
 
+/**
+ * The Supabase project URL.
+ *
+ * Nothing in this app reads it from the browser, so it does not need — and
+ * should not have — the NEXT_PUBLIC_ prefix, which would inline it into the
+ * client bundle for no benefit. The prefixed name is still accepted so an
+ * existing deployment keeps working.
+ */
+function supabaseUrl(): string | undefined {
+  return process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL
+}
+
 export function isStorageConfigured(): boolean {
-  return Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
+  return Boolean(supabaseUrl() && process.env.SUPABASE_SERVICE_ROLE_KEY)
 }
 
 let client: SupabaseClient | null = null
@@ -65,7 +77,7 @@ function storage(): SupabaseClient {
 
   if (!client) {
     client = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL as string,
+      supabaseUrl() as string,
       process.env.SUPABASE_SERVICE_ROLE_KEY as string,
       { auth: { persistSession: false, autoRefreshToken: false } },
     )

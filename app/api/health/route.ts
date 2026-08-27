@@ -67,7 +67,15 @@ export async function GET() {
       present: Boolean(env.NEXTAUTH_URL),
       pointsAtLocalhost: Boolean(env.NEXTAUTH_URL?.includes('localhost')),
     },
-    NEXT_PUBLIC_SUPABASE_URL: describeSupabaseUrl(env.NEXT_PUBLIC_SUPABASE_URL),
+    SUPABASE_URL: {
+      ...describeSupabaseUrl(env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL),
+      // Which name it was found under, so a half-finished rename is visible.
+      readFrom: env.SUPABASE_URL
+        ? 'SUPABASE_URL'
+        : env.NEXT_PUBLIC_SUPABASE_URL
+          ? 'NEXT_PUBLIC_SUPABASE_URL'
+          : null,
+    },
     SUPABASE_SERVICE_ROLE_KEY: {
       present: Boolean(env.SUPABASE_SERVICE_ROLE_KEY),
       length: env.SUPABASE_SERVICE_ROLE_KEY?.length ?? 0,
