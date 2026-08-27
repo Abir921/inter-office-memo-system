@@ -1,0 +1,7 @@
+# Normalise line endings so the repository is consistent regardless of the
+# machine it was committed from. Without this, working on Windows produces a
+# CRLF warning on every file at every commit.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
