@@ -1,0 +1,547 @@
+// Inter-Office Memo Management System — Prisma schema
+// Multi-tenancy: shared database, shared schema, discriminator column (organizationId).
+// Every tenant-scoped model carries organizationId and indexes it.
+// organizationId is always taken from the session, never from client input.
+//
+// PRISMA VERSION: this schema targets Prisma 6.x, where the connection URL lives
+// in the datasource block below. Prisma 7 moved it to prisma.config.ts and will
+// reject `url = env(...)` with error P1012. Pin the dependency:
+//   npm i -D prisma@6.19.3 && npm i @prisma/client@6.19.3
+// Do not run `npm i prisma@latest` on this project.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum Role {
+  SUPER_ADMIN // platform level, not tenant-scoped in practice
+  ORG_ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum Priority {
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum MemoStatus {
+  DRAFT
+  SUBMITTED
+  PENDING_REVIEW
+  PENDING_APPROVAL
+  CHANGES_REQUESTED
+  REJECTED
+  APPROVED
+  CANCELLED
+}
+
+enum StepState {
+  PENDING
+  CURRENT
+  COMPLETED
+  SKIPPED
+}
+
+enum StepActionType {
+  APPROVE
+  REJECT
+  COMMENT
+  REQUEST_CHANGES
+  REVIEW_COMPLETE
+}
+
+enum CommentType {
+  GENERAL
+  APPROVAL
+  REJECTION
+  CHANGE_REQUEST
+}
+
+enum NotificationType {
+  ACTION_REQUIRED
+  MEMO_APPROVED
+  MEMO_REJECTED
+  CHANGES_REQUESTED
+  COMMENT_ADDED
+  MEMO_RESUBMITTED
+  WORKFLOW_COMPLETED
+  WORKFLOW_ASSIGNED
+}
+
+enum DelegationStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum AuditEventType {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_CREATED
+  USER_ACTIVATED
+  USER_DEACTIVATED
+  USER_UPDATED
+  PASSWORD_CHANGED
+  PASSWORD_RESET
+  ORGANIZATION_UPDATED
+  DEPARTMENT_CREATED
+  DEPARTMENT_UPDATED
+  DEPARTMENT_DEACTIVATED
+  CATEGORY_CREATED
+  CATEGORY_UPDATED
+  TEMPLATE_CREATED
+  TEMPLATE_UPDATED
+  MEMO_CREATED
+  MEMO_MODIFIED
+  MEMO_SUBMITTED
+  MEMO_RESUBMITTED
+  MEMO_CANCELLED
+  WORKFLOW_ASSIGNED
+  WORKFLOW_COMMENT
+  WORKFLOW_APPROVAL
+  WORKFLOW_REJECTION
+  WORKFLOW_CHANGE_REQUEST
+  WORKFLOW_COMPLETED
+  ATTACHMENT_UPLOADED
+  ATTACHMENT_DELETED
+  DELEGATION_CREATED
+  DELEGATION_CANCELLED
+  MEMO_EXPORTED
+}
+
+// ---------------------------------------------------------------------------
+// Tenant root
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique // organization identifier, used in memo numbers
+  logoUrl      String?
+  contactEmail String?
+  contactPhone String?
+  address      String?
+  isActive     Boolean  @default(true)
+  settings     Json     @default("{}") // org-specific configuration
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  departments   Department[]
+  users         User[]
+  categories    MemoCategory[]
+  templates     WorkflowTemplate[]
+  memos         Memo[]
+  memoSequences MemoSequence[]
+  steps         WorkflowStep[]
+  actions       WorkflowAction[]
+  versions      MemoVersion[]
+  comments      Comment[]
+  attachments   Attachment[]
+  notifications Notification[]
+  auditLogs     AuditLog[]
+  delegations   Delegation[]
+  invites       UserInvite[]
+
+  @@index([slug])
+}
+
+model Department {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users        User[]
+  memos        Memo[]
+  invites      UserInvite[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Users
+// ---------------------------------------------------------------------------
+
+model User {
+  id                 String     @id @default(cuid())
+  organizationId     String
+  name               String
+  email              String
+  passwordHash       String
+  designation        String?
+  departmentId       String?
+  role               Role       @default(USER)
+  status             UserStatus @default(ACTIVE)
+  avatarUrl          String?
+  mustChangePassword Boolean    @default(false)
+  lastLoginAt        DateTime?
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+
+  authoredMemos      Memo[]              @relation("MemoAuthor")
+  finalApprovedMemos Memo[]              @relation("MemoFinalApprover")
+  assignedSteps      WorkflowStep[]      @relation("StepAssignee")
+  performedActions   WorkflowAction[]    @relation("ActionActor")
+  actionsOnBehalfOf  WorkflowAction[]    @relation("ActionOnBehalfOf")
+  memoVersions       MemoVersion[]
+  comments           Comment[]
+  attachments        Attachment[]
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  resetTokens        PasswordResetToken[]
+  delegationsGiven   Delegation[]        @relation("Delegator")
+  delegationsHeld    Delegation[]        @relation("Delegate")
+  invitesSent        UserInvite[]        @relation("InviteCreatedBy")
+
+  // Email is unique per organization, not globally: two tenants may employ the
+  // same person. Login resolves the org via slug or an org selector.
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([departmentId])
+  @@index([email])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique // store the hash, never the raw token
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model UserInvite {
+  id             String     @id @default(cuid())
+  organizationId String
+  email          String
+  name           String?
+  designation    String?
+  departmentId   String?
+  role           Role       @default(USER)
+  tokenHash      String     @unique
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+  createdById    String
+  createdAt      DateTime   @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  department   Department?  @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  createdBy    User         @relation("InviteCreatedBy", fields: [createdById], references: [id])
+
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Configuration: categories, workflow templates
+// ---------------------------------------------------------------------------
+
+model MemoCategory {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memos        Memo[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model WorkflowTemplate {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  description    String?
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  steps        WorkflowTemplateStep[]
+  memos        Memo[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+model WorkflowTemplateStep {
+  id            String @id @default(cuid())
+  templateId    String
+  position      Int // 1-based, contiguous
+  positionLabel String // e.g. "Finance Manager"
+  defaultDepartmentId String?
+
+  template WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@unique([templateId, position])
+  @@index([templateId])
+}
+
+// Per-organization, per-year memo number counter. Incremented inside the same
+// transaction that creates the memo, so numbers never collide or skip tenants.
+model MemoSequence {
+  id             String @id @default(cuid())
+  organizationId String
+  year           Int
+  lastNumber     Int    @default(0)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, year])
+}
+
+// ---------------------------------------------------------------------------
+// Memos
+// ---------------------------------------------------------------------------
+
+model Memo {
+  id             String     @id @default(cuid())
+  organizationId String
+  memoNumber     String // e.g. NORTHWIND-2026-0001
+  subject        String
+  bodyHtml       String // sanitized server-side before storage
+  authorId       String
+  departmentId   String?
+  categoryId     String?
+  templateId     String?
+  priority       Priority   @default(NORMAL)
+  status         MemoStatus @default(DRAFT)
+
+  // Points at the WorkflowStep whose turn it is. Kept as a scalar (not a
+  // relation) to avoid a circular required relation; validate in lib/workflow.ts.
+  currentStepId   String?
+  currentVersion  Int      @default(1)
+  submissionCycle Int      @default(0) // increments on every submit/resubmit
+
+  submittedAt     DateTime?
+  completedAt     DateTime?
+  finalApproverId String?
+  lastActivityAt  DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization  Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  author        User              @relation("MemoAuthor", fields: [authorId], references: [id])
+  department    Department?       @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  category      MemoCategory?     @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  template      WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  finalApprover User?             @relation("MemoFinalApprover", fields: [finalApproverId], references: [id], onDelete: SetNull)
+
+  steps         WorkflowStep[]
+  actions       WorkflowAction[]
+  versions      MemoVersion[]
+  comments      Comment[]
+  attachments   Attachment[]
+  notifications Notification[]
+
+  @@unique([organizationId, memoNumber])
+  @@index([organizationId, status])
+  @@index([organizationId, authorId])
+  @@index([organizationId, departmentId])
+  @@index([currentStepId])
+  @@index([organizationId, createdAt])
+}
+
+// Mutable view of the workflow: one row per position per submission cycle.
+model WorkflowStep {
+  id              String    @id @default(cuid())
+  organizationId  String
+  memoId          String
+  submissionCycle Int       @default(1)
+  position        Int // 1-based, contiguous within a cycle
+  positionLabel   String?
+  assigneeId      String
+  state           StepState @default(PENDING)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memo         Memo         @relation(fields: [memoId], references: [id], onDelete: Cascade)
+  assignee     User         @relation("StepAssignee", fields: [assigneeId], references: [id])
+  actions      WorkflowAction[]
+
+  @@unique([memoId, submissionCycle, position])
+  @@index([organizationId, assigneeId, state]) // drives the inbox query
+  @@index([memoId])
+}
+
+// Append-only record of every workflow decision. Source of truth for the
+// timeline and for history preservation across resubmissions. Never updated,
+// never deleted.
+model WorkflowAction {
+  id                 String         @id @default(cuid())
+  organizationId     String
+  memoId             String
+  stepId             String?
+  submissionCycle    Int            @default(1)
+  position           Int?
+  action             StepActionType
+  actorId            String
+  actedOnBehalfOfId  String? // set when a delegate acted
+  comment            String?
+  createdAt          DateTime       @default(now())
+
+  organization    Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memo            Memo          @relation(fields: [memoId], references: [id], onDelete: Cascade)
+  step            WorkflowStep? @relation(fields: [stepId], references: [id], onDelete: SetNull)
+  actor           User          @relation("ActionActor", fields: [actorId], references: [id])
+  actedOnBehalfOf User?         @relation("ActionOnBehalfOf", fields: [actedOnBehalfOfId], references: [id], onDelete: SetNull)
+
+  @@index([memoId, createdAt])
+  @@index([organizationId])
+}
+
+model MemoVersion {
+  id              String   @id @default(cuid())
+  organizationId  String
+  memoId          String
+  versionNumber   Int
+  submissionCycle Int
+  subject         String
+  bodyHtml        String
+  priority        Priority @default(NORMAL)
+  editedById      String
+  createdAt       DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memo         Memo         @relation(fields: [memoId], references: [id], onDelete: Cascade)
+  editedBy     User         @relation(fields: [editedById], references: [id])
+
+  @@unique([memoId, versionNumber])
+  @@index([memoId])
+}
+
+model Comment {
+  id             String      @id @default(cuid())
+  organizationId String
+  memoId         String
+  authorId       String
+  text           String
+  type           CommentType @default(GENERAL)
+  workflowStepId String?
+  createdAt      DateTime    @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memo         Memo         @relation(fields: [memoId], references: [id], onDelete: Cascade)
+  author       User         @relation(fields: [authorId], references: [id])
+
+  @@index([memoId, createdAt])
+  @@index([organizationId])
+}
+
+model Attachment {
+  id             String   @id @default(cuid())
+  organizationId String
+  memoId         String
+  fileName       String // original name, display only
+  storageKey     String   @unique // random UUID key in the private bucket
+  mimeType       String
+  sizeBytes      Int
+  uploadedById   String
+  isDeleted      Boolean  @default(false)
+  uploadedAt     DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  memo         Memo         @relation(fields: [memoId], references: [id], onDelete: Cascade)
+  uploadedBy   User         @relation(fields: [uploadedById], references: [id])
+
+  @@index([memoId])
+  @@index([organizationId])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications, audit, delegation
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id             String           @id @default(cuid())
+  organizationId String
+  userId         String
+  memoId         String?
+  type           NotificationType
+  title          String
+  message        String
+  isRead         Boolean          @default(false)
+  readAt         DateTime?
+  createdAt      DateTime         @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  memo         Memo?        @relation(fields: [memoId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@index([organizationId])
+}
+
+// Append-only. No update or delete route may exist for this model.
+model AuditLog {
+  id             String         @id @default(cuid())
+  organizationId String
+  userId         String?
+  eventType      AuditEventType
+  entityType     String? // "Memo", "User", "Department", ...
+  entityId       String?
+  description    String
+  ipAddress      String?
+  userAgent      String?
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([organizationId, eventType])
+  @@index([entityType, entityId])
+}
+
+model Delegation {
+  id             String           @id @default(cuid())
+  organizationId String
+  delegatorId    String
+  delegateId     String
+  startDate      DateTime
+  endDate        DateTime
+  reason         String?
+  status         DelegationStatus @default(ACTIVE)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  delegator    User         @relation("Delegator", fields: [delegatorId], references: [id], onDelete: Cascade)
+  delegate     User         @relation("Delegate", fields: [delegateId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, delegatorId, status])
+  @@index([delegateId, status])
+}

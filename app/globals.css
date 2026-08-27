@@ -1,0 +1,79 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens — Inter-Office Memo Management System
+   The subject is an office routing slip: the paper form stapled to a memo and
+   initialled by each desk it crossed. Precise, administrative, quietly
+   confident. Colours are declared here and NOWHERE else literally.
+   --------------------------------------------------------------------------- */
+
+:root {
+  --ink: #16202b;       /* primary text, headers                */
+  --paper: #fbfaf7;     /* app background                       */
+  --rule: #d8d3c7;      /* hairlines, dividers, table borders   */
+  --stamp: #a3242b;     /* rejection, urgent                    */
+  --seal: #2f5d50;      /* approved, success                    */
+  --pending: #b8791f;   /* changes requested, awaiting action   */
+
+  /* Derived surfaces — tints of the six, not new hues. */
+  --card: #ffffff;
+  --muted: #6b7580;     /* secondary text                       */
+  --ink-soft: #3a4753;  /* body copy on paper                   */
+  --wash: #f2efe8;      /* table header / inset panel           */
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-rule: var(--rule);
+  --color-stamp: var(--stamp);
+  --color-seal: var(--seal);
+  --color-pending: var(--pending);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-ink-soft: var(--ink-soft);
+  --color-wash: var(--wash);
+
+  --font-display: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-plex-mono), ui-monospace, "Cascadia Mono", monospace;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Display face: tight tracking, weight 600, sentence case. */
+h1, h2, h3, h4 {
+  font-family: var(--font-archivo), ui-sans-serif, system-ui, sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  color: var(--ink);
+}
+
+/* The data face. Memo numbers, timestamps, step positions, file sizes — this
+   is the detail that makes the product read as a records system. */
+.font-data {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Quality floor: keyboard focus must always be visible. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
