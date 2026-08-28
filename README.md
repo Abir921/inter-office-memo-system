@@ -80,6 +80,27 @@ Use `npm run check` rather than `npm run build` when the dev server is running.
 
 ---
 
+## ⚠️ If `DATABASE_URL` seems to be ignored
+
+Symptom: `.env` has the right value, but the app still can't reach the
+database, or logs an error like *"the URL must start with the protocol
+`postgresql://`"* even though `.env` clearly does.
+
+Cause: something outside this project — most often a Windows User
+environment variable set via System Properties or `setx`, or a stray
+`export` in a shell profile — is already exporting `DATABASE_URL` (or
+`AUTH_SECRET`, `SUPABASE_URL`, etc.) under the same name. Every loader in this
+stack (Next.js's own `.env` loading, and Prisma Client's) only fills in a key
+when it is genuinely unset, so an ambient value with the same name silently
+wins over `.env`, with no error pointing at the real cause.
+
+Fix, in order:
+1. Check whether the name is set outside the project:
+   PowerShell — `[Environment]::GetEnvironmentVariable("DATABASE_URL","User")`
+   Bash — `echo "$DATABASE_URL"`
+2. If it is, remove it there (PowerShell: `[Environment]::SetEnvironmentVariable("DATABASE_URL",$null,"User")`) and open a **new** terminal — already-running terminals keep their old value for their entire lifetime.
+3. Every script in this project (`npm run dev`, `build`, `seed`, `verify`, `db:*`) already routes through [`scripts/with-clean-env.mjs`](scripts/with-clean-env.mjs), which strips this specific set of keys before the real command runs, so `.env` wins regardless of what else is set in the environment. If you add a new script that reads one of these keys, wrap it the same way.
+
 ## ⚠️ Prisma is pinned to 6.19.3
 
 `prisma` and `@prisma/client` must stay in lockstep at **6.19.3**.

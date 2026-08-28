@@ -10,6 +10,7 @@
 
 import { NextResponse } from 'next/server'
 import { ZodError } from 'zod'
+import { AdminError } from './admin'
 import { AuthError } from './auth'
 import { NotFoundError } from './tenant'
 import { WorkflowError } from './workflow'
@@ -59,6 +60,10 @@ export function toErrorResponse(error: unknown): NextResponse<ApiErrorBody> {
 
   if (error instanceof WorkflowError) {
     return jsonError(error.httpStatus, error.message)
+  }
+
+  if (error instanceof AdminError) {
+    return jsonError(error.httpStatus, error.message, error.fields)
   }
 
   // Anything unrecognised: log it where we can see it, tell the client nothing.

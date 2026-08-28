@@ -14,6 +14,13 @@
 import { randomBytes } from 'node:crypto'
 import { PrismaClient, Role } from '@prisma/client'
 import bcrypt from 'bcryptjs'
+import {
+  AdminError,
+  createDepartment,
+  createUser,
+  setUserStatus,
+  updateUser,
+} from '../lib/admin'
 import { addComment } from '../lib/comment'
 import { hashPassword } from '../lib/auth'
 import { createMemo, deleteDraft, updateMemo } from '../lib/memo'
@@ -67,6 +74,136 @@ async function expectWorkflowError(
     } else {
       check(label, false, 'unexpected error: ' + String(error))
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HTTP-level check: does requireAdmin() actually refuse a non-admin session?
+// ---------------------------------------------------------------------------
+//
+// Everything above calls into lib/admin.ts directly, which trusts its caller
+// to have already been through requireAdmin() — that check lives in the route
+// HANDLER, not the service. The only way to prove the handler really enforces
+// it is to sign in over real HTTP with a real session cookie and hit the real
+// route. This needs a dev server listening, so it degrades to a clearly
+// labelled SKIP rather than a failure when one isn't running.
+
+const HTTP_BASE = process.env.VERIFY_BASE_URL ?? 'http://localhost:3000'
+
+class CookieJar {
+  private jar = new Map<string, string>()
+
+  absorb(response: Response) {
+    for (const raw of response.headers.getSetCookie()) {
+      const pair = raw.split(';')[0]
+      const eq = pair.indexOf('=')
+      if (eq > 0) this.jar.set(pair.slice(0, eq), pair.slice(eq + 1))
+    }
+  }
+
+  header(): string {
+    return [...this.jar.entries()].map(([k, v]) => k + '=' + v).join('; ')
+  }
+}
+
+async function jarFetch(jar: CookieJar, url: string, init: RequestInit = {}): Promise<Response> {
+  const response = await fetch(url, {
+    ...init,
+    redirect: 'manual',
+    headers: { ...init.headers, cookie: jar.header() },
+  })
+  jar.absorb(response)
+  return response
+}
+
+/** Signs in via the real Auth.js credentials endpoint. Returns whether it worked. */
+async function httpSignIn(
+  jar: CookieJar,
+  email: string,
+  password: string,
+  organizationId: string,
+): Promise<boolean> {
+  const csrfRes = await jarFetch(jar, HTTP_BASE + '/api/auth/csrf')
+  const { csrfToken } = (await csrfRes.json()) as { csrfToken: string }
+
+  await jarFetch(jar, HTTP_BASE + '/api/auth/callback/credentials', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ csrfToken, email, password, organizationId, json: 'true' }),
+  })
+
+  return jar.header().includes('session-token')
+}
+
+async function verifyHttpAuthorizationBoundary(opts: {
+  adminEmail: string
+  userEmail: string
+  password: string
+  organizationId: string
+}) {
+  const label = (s: string) => '[HTTP] ' + s
+
+  // Probe first: if nothing is listening, skip the whole section cleanly.
+  try {
+    const probe = await fetch(HTTP_BASE + '/api/health', {
+      signal: AbortSignal.timeout(2000),
+    })
+    void probe
+  } catch {
+    console.log(
+      '  SKIP  ' +
+        label('admin routes over real HTTP') +
+        '  (no dev server at ' +
+        HTTP_BASE +
+        ' — run `npm run dev` alongside `npm run verify` to include this)',
+    )
+    return
+  }
+
+  try {
+    const userJar = new CookieJar()
+    const userSignedIn = await httpSignIn(userJar, opts.userEmail, opts.password, opts.organizationId)
+    check(label('an ordinary user can sign in over HTTP'), userSignedIn)
+
+    const asUser = await jarFetch(userJar, HTTP_BASE + '/api/departments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Should Not Exist' }),
+    })
+    check(
+      label('a non-admin session gets 403 from POST /api/departments'),
+      asUser.status === 403,
+      'got ' + asUser.status,
+    )
+
+    const asUserUsers = await jarFetch(userJar, HTTP_BASE + '/api/users')
+    check(
+      label('a non-admin session gets 403 from GET /api/users'),
+      asUserUsers.status === 403,
+      'got ' + asUserUsers.status,
+    )
+
+    const adminJar = new CookieJar()
+    const adminSignedIn = await httpSignIn(
+      adminJar,
+      opts.adminEmail,
+      opts.password,
+      opts.organizationId,
+    )
+    check(label('an administrator can sign in over HTTP'), adminSignedIn)
+
+    const asAdmin = await jarFetch(adminJar, HTTP_BASE + '/api/departments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Scratch HTTP Department' }),
+    })
+    check(
+      label('the same route accepts the same request from an admin session'),
+      asAdmin.status === 201,
+      'got ' + asAdmin.status,
+    )
+  } catch (error) {
+    check(label('admin routes over real HTTP'), false, 'unexpected error: ' + String(error))
   }
 }
 
@@ -894,6 +1031,101 @@ async function main() {
             action: 'APPROVE',
           }),
       )
+
+      // --- 9e. Administration is scoped to admins, tenant, and self-lockout --
+
+      const scratchCtx: TenantContext = {
+        organizationId: scratchOrgId,
+        userId: setup.userId,
+        role: Role.ORG_ADMIN,
+      }
+
+      const newDept = await createDepartment(scratchCtx, {
+        name: 'Scratch Procurement',
+        description: null,
+      })
+      check('An admin can create a department', Boolean(newDept.id))
+
+      try {
+        await createDepartment(scratchCtx, { name: 'Scratch Procurement', description: null })
+        check('A duplicate department name is refused', false, 'it was allowed')
+      } catch (error) {
+        check(
+          'A duplicate department name is refused',
+          error instanceof AdminError && error.httpStatus === 409,
+        )
+      }
+
+      const newHire = await createUser(scratchCtx, {
+        name: 'Scratch New Hire',
+        email: 'newhire@verify-' + suffix + '.test',
+        designation: null,
+        departmentId: null,
+        role: 'USER',
+        password: 'TempPassw0rd!',
+      })
+      check('An admin can create a user', Boolean(newHire.id))
+      check(
+        'A newly created user must change their password on first sign-in',
+        newHire.mustChangePassword === true,
+      )
+
+      try {
+        await createUser(scratchCtx, {
+          name: 'Duplicate',
+          email: newHire.email,
+          designation: null,
+          departmentId: null,
+          role: 'USER',
+          password: 'TempPassw0rd!',
+        })
+        check('A duplicate email within the same organization is refused', false, 'it was allowed')
+      } catch (error) {
+        check(
+          'A duplicate email within the same organization is refused',
+          error instanceof AdminError && error.httpStatus === 409,
+        )
+      }
+
+      try {
+        await updateUser(scratchCtx, setup.userId, {
+          name: 'Scratch Admin',
+          designation: null,
+          departmentId: null,
+          role: 'USER',
+        })
+        check('The sole administrator cannot demote themself', false, 'it was allowed')
+      } catch (error) {
+        check(
+          'The sole administrator cannot demote themself',
+          error instanceof AdminError && error.httpStatus === 409,
+        )
+      }
+
+      try {
+        await setUserStatus(scratchCtx, setup.userId, 'INACTIVE')
+        check('The sole administrator cannot deactivate themself', false, 'it was allowed')
+      } catch (error) {
+        check(
+          'The sole administrator cannot deactivate themself',
+          error instanceof AdminError,
+        )
+      }
+
+      // The lib/admin.ts functions above don't check ROLE themselves — that
+      // gate is requireAdmin(), enforced in the route HANDLER, before any of
+      // these functions are ever called. So the only way to prove a non-admin
+      // is actually refused is to go over real HTTP, session cookie and all.
+      // This is optional: if no dev server is listening, it is skipped rather
+      // than failing the whole run, so `npm run verify` stays a pure database
+      // check by default and gets stronger automatically when `npm run dev`
+      // is also running.
+      await verifyHttpAuthorizationBoundary({
+        adminEmail: 'admin@verify-' + suffix + '.test',
+        userEmail: author.email,
+        password: 'ScratchPassw0rd!',
+        organizationId: scratchOrgId,
+      })
     } finally {
       // Cascades: every department, user, memo, step, action, version,
       // comment, attachment, notification and audit row this organization
