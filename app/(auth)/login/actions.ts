@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { resolveLoginOrganization, signIn } from '@/lib/auth'
+import { LOGIN_LIMIT, rateLimit } from '@/lib/rate-limit'
 import { loginSchema } from '@/lib/validation/auth'
 
 /**
@@ -55,6 +56,19 @@ export async function loginAction(
 
   const { email, password } = parsed.data
   let organizationId = parsed.data.organizationId
+
+  // Checked before any bcrypt comparison happens, so a sustained attempt
+  // against one address is throttled rather than run at full speed. Keyed by
+  // email, not by IP: a shared office connection should not lock everyone out
+  // because of one wrong password.
+  const limit = rateLimit('login:' + email, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs)
+  if (!limit.allowed) {
+    const minutes = Math.ceil(limit.retryAfterSeconds / 60)
+    return {
+      error: 'Too many attempts. Try again in ' + minutes + (minutes === 1 ? ' minute.' : ' minutes.'),
+      values: { email },
+    }
+  }
 
   // Work out which tenant this sign-in belongs to before handing over to
   // Auth.js, so the provider never has to guess between two organizations.

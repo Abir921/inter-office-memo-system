@@ -16,6 +16,7 @@ import { AuditEventType, UserStatus } from '@prisma/client'
 import { writeAudit } from './audit'
 import { hashPassword } from './auth'
 import { prisma } from './prisma'
+import { PASSWORD_RESET_LIMIT, rateLimit } from './rate-limit'
 
 const TOKEN_TTL_MINUTES = 60
 
@@ -37,9 +38,19 @@ export function canRevealResetLink(): boolean {
 export async function issuePasswordResetToken(
   email: string,
 ): Promise<{ token: string | null }> {
+  const normalizedEmail = email.trim().toLowerCase()
+
+  // Checked before the user lookup, and fails the exact same way a "no such
+  // account" does: the caller (app/(auth)/forgot-password/actions.ts) shows
+  // the identical "if that address exists…" message either way, so being
+  // over the limit is not observable from the response.
+  if (!rateLimit('reset:' + normalizedEmail, PASSWORD_RESET_LIMIT.max, PASSWORD_RESET_LIMIT.windowMs).allowed) {
+    return { token: null }
+  }
+
   const user = await prisma.user.findFirst({
     where: {
-      email: email.trim().toLowerCase(),
+      email: normalizedEmail,
       status: UserStatus.ACTIVE,
       organization: { isActive: true },
     },

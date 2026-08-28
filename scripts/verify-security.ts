@@ -23,6 +23,7 @@ import {
 } from '../lib/admin'
 import { addComment } from '../lib/comment'
 import { hashPassword } from '../lib/auth'
+import { LOGIN_LIMIT, PASSWORD_RESET_LIMIT, rateLimit } from '../lib/rate-limit'
 import { createMemo, deleteDraft, updateMemo } from '../lib/memo'
 import { resolveDownload } from '../lib/attachment'
 import { createOrganizationWithAdmin } from '../lib/organization'
@@ -1195,6 +1196,60 @@ async function main() {
       // owns is removed with it. The seeded demo data is never touched.
       await prisma.organization.delete({ where: { id: scratchOrgId } })
     }
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\n10. RATE LIMITING')
+  // -------------------------------------------------------------------------
+
+  {
+    // A key unique to this run, so repeated `npm run verify` calls never
+    // collide with a bucket a previous run already used up.
+    const rlKey = 'test-login:verify-' + suffix + '@example.test'
+
+    let allowedCount = 0
+    let lastResult: ReturnType<typeof rateLimit> | null = null
+    for (let i = 0; i < LOGIN_LIMIT.max; i++) {
+      lastResult = rateLimit(rlKey, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs)
+      if (lastResult.allowed) allowedCount++
+    }
+    check(
+      'The first ' + LOGIN_LIMIT.max + ' login attempts on one key are all allowed',
+      allowedCount === LOGIN_LIMIT.max,
+      allowedCount + ' allowed',
+    )
+
+    const oneOver = rateLimit(rlKey, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs)
+    check(
+      'The ' + (LOGIN_LIMIT.max + 1) + 'th attempt on the same key is refused',
+      !oneOver.allowed && oneOver.retryAfterSeconds > 0,
+      'allowed=' + oneOver.allowed + ', retryAfterSeconds=' + oneOver.retryAfterSeconds,
+    )
+
+    const differentKey = rateLimit(
+      'test-login:someone-else@example.test',
+      LOGIN_LIMIT.max,
+      LOGIN_LIMIT.windowMs,
+    )
+    check(
+      'A different key (a different account) is unaffected by the first one being exhausted',
+      differentKey.allowed,
+    )
+
+    // The password-reset limiter is a separate bucket namespace with its own
+    // max, exercised the same way.
+    const resetKey = 'test-reset:verify-' + suffix + '@example.test'
+    let resetAllowed = 0
+    for (let i = 0; i < PASSWORD_RESET_LIMIT.max + 1; i++) {
+      if (rateLimit(resetKey, PASSWORD_RESET_LIMIT.max, PASSWORD_RESET_LIMIT.windowMs).allowed) {
+        resetAllowed++
+      }
+    }
+    check(
+      'Password reset issuance is capped at ' + PASSWORD_RESET_LIMIT.max + ' per window',
+      resetAllowed === PASSWORD_RESET_LIMIT.max,
+      resetAllowed + ' allowed out of ' + (PASSWORD_RESET_LIMIT.max + 1) + ' attempts',
+    )
   }
 
   console.log('\n' + '-'.repeat(64))

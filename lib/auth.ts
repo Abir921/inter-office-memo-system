@@ -12,6 +12,7 @@ import Credentials from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { writeAudit } from './audit'
 import { authConfig } from './auth.config'
+import { LOGIN_LIMIT, rateLimit } from './rate-limit'
 import { prisma } from './prisma'
 import type { Actor } from './workflow'
 
@@ -42,6 +43,17 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           : undefined
 
         if (!email || !password) return null
+
+        // Defence in depth: the login action (app/(auth)/login/actions.ts)
+        // checks this same limit before ever reaching signIn(), and shows the
+        // caller a friendly "try again in N minutes" message. This check
+        // exists for whoever calls the NextAuth credentials endpoint directly,
+        // bypassing the action entirely — it fails the same generic way as a
+        // wrong password, since a direct API caller gets no custom messaging
+        // either way.
+        if (!rateLimit('login:' + email, LOGIN_LIMIT.max, LOGIN_LIMIT.windowMs).allowed) {
+          return null
+        }
 
         // Email is unique per organization, not globally, so this can match
         // more than one row. The login server action resolves which one before
