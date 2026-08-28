@@ -2,15 +2,19 @@ import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound, redirect } from 'next/navigation'
 import type { StepActionType } from '@prisma/client'
+import { ActionPanel } from '@/components/app/action-panel'
 import { Attachments } from '@/components/app/attachments'
+import { CancelMemoButton } from '@/components/app/cancel-memo-button'
 import { CommentForm } from '@/components/app/comment-form'
 import { RoutingRail, type RailStep } from '@/components/app/routing-rail'
 import { PriorityChip, StatusBadge } from '@/components/app/status-badge'
 import { getSessionUser, isAdmin } from '@/lib/auth'
 import { stamp } from '@/lib/format'
 import { MEMO_DETAIL_INCLUDE } from '@/lib/memo'
-import { visibleMemoWhere } from '@/lib/memo-queries'
+import { ACTIVE_STATUSES, visibleMemoWhere } from '@/lib/memo-queries'
+import { prisma } from '@/lib/prisma'
 import { scoped, tenantContext } from '@/lib/tenant'
+import { getActiveDelegatorIds } from '@/lib/workflow'
 
 export const metadata: Metadata = { title: 'Memo · Inter-Office Memo' }
 export const dynamic = 'force-dynamic'
@@ -164,6 +168,29 @@ export default async function MemoDetailPage({
     memo.status !== 'DRAFT' &&
     (isAuthor || participantIds.has(user.id) || isAdmin(user))
 
+  // Whether THIS session may act on the current step. Rendering the panel at
+  // all is a courtesy — performWorkflowAction re-derives and re-checks this
+  // exact condition server-side, from the session, before writing anything.
+  // Hiding a button is not authorization; this only decides what to show.
+  const delegatorIds = currentStep
+    ? await getActiveDelegatorIds(prisma, {
+        id: user.id,
+        organizationId: user.organizationId,
+        role: user.role,
+      })
+    : []
+  const canAct =
+    Boolean(currentStep) &&
+    ACTIVE_STATUSES.includes(memo.status) &&
+    (currentStep!.assigneeId === user.id || delegatorIds.includes(currentStep!.assigneeId))
+
+  const isLastStep = Boolean(currentStep) && currentStep!.position === steps.length
+
+  const canCancel =
+    (isAuthor || isAdmin(user)) &&
+    memo.status !== 'DRAFT' &&
+    ACTIVE_STATUSES.includes(memo.status)
+
   const toneClass = {
     ink: 'text-ink',
     seal: 'text-seal',
@@ -224,17 +251,28 @@ export default async function MemoDetailPage({
           ) : null}
         </dl>
 
-        {canEdit ? (
-          <div className="mt-5">
-            <Link
-              href={'/memos/' + memo.id + '/edit'}
-              className="inline-flex h-9 items-center rounded-sm border border-rule bg-card px-4 text-sm font-medium text-ink hover:bg-wash"
-            >
-              {memo.status === 'DRAFT' ? 'Edit draft' : 'Revise and resubmit'}
-            </Link>
+        {canEdit || canCancel ? (
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            {canEdit ? (
+              <Link
+                href={'/memos/' + memo.id + '/edit'}
+                className="inline-flex h-9 items-center rounded-sm border border-rule bg-card px-4 text-sm font-medium text-ink hover:bg-wash"
+              >
+                {memo.status === 'DRAFT' ? 'Edit draft' : 'Revise and resubmit'}
+              </Link>
+            ) : null}
+            {canCancel ? <CancelMemoButton memoId={memo.id} /> : null}
           </div>
         ) : null}
       </header>
+
+      {/* ---- Action panel: rendered ONLY for the current step's assignee.
+           This is a courtesy, not the authorization boundary — the route
+           handler re-checks the same condition from the session before
+           writing anything. ---- */}
+      {canAct && currentStep ? (
+        <ActionPanel memoId={memo.id} stepId={currentStep.id} isLastStep={isLastStep} />
+      ) : null}
 
       {/* ---- The memo body ---- */}
       <section>

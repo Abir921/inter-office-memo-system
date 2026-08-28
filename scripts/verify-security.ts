@@ -11,20 +11,27 @@
 // Every check that would mutate data is a NEGATIVE case, so the script is safe
 // to run repeatedly and leaves the demo data untouched.
 
-import { PrismaClient } from '@prisma/client'
+import { randomBytes } from 'node:crypto'
+import { PrismaClient, Role } from '@prisma/client'
 import bcrypt from 'bcryptjs'
 import { addComment } from '../lib/comment'
-import { deleteDraft, updateMemo } from '../lib/memo'
+import { hashPassword } from '../lib/auth'
+import { createMemo, deleteDraft, updateMemo } from '../lib/memo'
 import { resolveDownload } from '../lib/attachment'
+import { createOrganizationWithAdmin } from '../lib/organization'
 import { sanitizeMemoBody } from '../lib/sanitize'
 import { StorageError, validateUpload } from '../lib/storage'
 import { scoped, type TenantContext } from '../lib/tenant'
 import {
   WorkflowError,
   assertCanAct,
+  cancelMemo,
   performWorkflowAction,
+  resubmitMemo,
+  submitMemo,
   validateActionComment,
   validateParticipants,
+  type Actor,
 } from '../lib/workflow'
 
 const prisma = new PrismaClient()
@@ -586,6 +593,313 @@ async function main() {
     )
   } else {
     console.log('  SKIP  cross-tenant attachment download (no attachments seeded yet)')
+  }
+
+  // -------------------------------------------------------------------------
+  console.log('\n9. FULL WORKFLOW LIFECYCLE (on a scratch organization)')
+  // -------------------------------------------------------------------------
+  //
+  // Everything above proves the engine REFUSES bad input. This proves it does
+  // the right thing on good input: a complete 4-step approval, a rejection,
+  // and a request-changes/resubmit cycle that leaves the earlier round of
+  // decisions on the record.
+  //
+  // Runs against its own throwaway organization, deleted in the `finally`
+  // block below (Organization cascades to every row it owns), so the seeded
+  // demo data is untouched either way.
+
+  const suffix = randomBytes(4).toString('hex')
+  const setup = await createOrganizationWithAdmin({
+    organizationName: 'Verify Scratch Org',
+    slug: 'verify-' + suffix,
+    adminName: 'Scratch Admin',
+    adminEmail: 'admin@verify-' + suffix + '.test',
+    password: 'ScratchPassw0rd!',
+  })
+
+  if (!setup.ok) {
+    check('Scratch organization created', false, 'slug collision — extremely unlikely, rerun')
+  } else {
+    const scratchOrgId = setup.organizationId
+
+    try {
+      const passwordHash = await hashPassword('ScratchPassw0rd!')
+      const org = await prisma.organization.findUniqueOrThrow({ where: { id: scratchOrgId } })
+
+      const [author, step1, step2, step3, step4] = await Promise.all(
+        ['author', 'head', 'finance', 'director', 'ceo'].map((label) =>
+          prisma.user.create({
+            data: {
+              organizationId: scratchOrgId,
+              name: 'Scratch ' + label,
+              email: label + '@verify-' + suffix + '.test',
+              passwordHash,
+              role: Role.USER,
+            },
+          }),
+        ),
+      )
+
+      const authorActor: Actor = {
+        id: author.id,
+        organizationId: scratchOrgId,
+        role: author.role,
+      }
+      const asActor = (u: typeof step1): Actor => ({
+        id: u.id,
+        organizationId: scratchOrgId,
+        role: u.role,
+      })
+
+      // --- 9a. A full four-step approval, start to finish -------------------
+
+      const memoA = await createMemo(
+        { ...authorActor, organizationSlug: org.slug },
+        {
+          subject: 'Scratch: four-step approval',
+          bodyHtml: '<p>Exercising the full approval chain.</p>',
+          departmentId: null,
+          categoryId: null,
+          templateId: null,
+          priority: 'NORMAL',
+        },
+      )
+
+      await submitMemo(prisma, authorActor, {
+        memoId: memoA.id,
+        participants: [
+          { position: 1, assigneeId: step1.id, positionLabel: 'Dept. Head' },
+          { position: 2, assigneeId: step2.id, positionLabel: 'Finance' },
+          { position: 3, assigneeId: step3.id, positionLabel: 'Director' },
+          { position: 4, assigneeId: step4.id, positionLabel: 'CEO' },
+        ],
+      })
+
+      let memoAState = await prisma.memo.findUniqueOrThrow({ where: { id: memoA.id } })
+      check(
+        'Submitting sets status PENDING_APPROVAL with step 1 current',
+        memoAState.status === 'PENDING_APPROVAL' && memoAState.currentStepId !== null,
+      )
+
+      for (const [index, approver] of [step1, step2, step3].entries()) {
+        const result = await performWorkflowAction(prisma, asActor(approver), {
+          memoId: memoA.id,
+          action: 'APPROVE',
+        })
+        check(
+          'Step ' + (index + 1) + ' approval advances to step ' + (index + 2),
+          result.status === 'PENDING_APPROVAL' && result.advancedTo !== null,
+        )
+      }
+
+      const finalResult = await performWorkflowAction(prisma, asActor(step4), {
+        memoId: memoA.id,
+        action: 'APPROVE',
+      })
+      check(
+        'The final approval completes the workflow',
+        finalResult.status === 'APPROVED' && finalResult.advancedTo === null,
+      )
+
+      memoAState = await prisma.memo.findUniqueOrThrow({ where: { id: memoA.id } })
+      check(
+        'The completed memo records its final approver and completion time',
+        memoAState.finalApproverId === step4.id && memoAState.completedAt !== null,
+      )
+      check(
+        'The completed memo is read-only: currentStepId is cleared',
+        memoAState.currentStepId === null,
+      )
+
+      const memoASteps = await prisma.workflowStep.findMany({ where: { memoId: memoA.id } })
+      check(
+        'All four steps ended COMPLETED, none skipped',
+        memoASteps.length === 4 && memoASteps.every((s) => s.state === 'COMPLETED'),
+      )
+
+      const memoAActions = await prisma.workflowAction.count({
+        where: { memoId: memoA.id, action: 'APPROVE' },
+      })
+      check('Four APPROVE decisions were recorded, one per step', memoAActions === 4)
+
+      // --- 9b. Rejection is terminal and skips whatever is left -------------
+
+      const memoB = await createMemo(
+        { ...authorActor, organizationSlug: org.slug },
+        {
+          subject: 'Scratch: rejection path',
+          bodyHtml: '<p>This one gets turned down at step 1.</p>',
+          departmentId: null,
+          categoryId: null,
+          templateId: null,
+          priority: 'NORMAL',
+        },
+      )
+
+      await submitMemo(prisma, authorActor, {
+        memoId: memoB.id,
+        participants: [
+          { position: 1, assigneeId: step1.id, positionLabel: 'Dept. Head' },
+          { position: 2, assigneeId: step2.id, positionLabel: 'Finance' },
+        ],
+      })
+
+      const rejection = await performWorkflowAction(prisma, asActor(step1), {
+        memoId: memoB.id,
+        action: 'REJECT',
+        comment: 'Budget not available this quarter.',
+      })
+      check('Rejecting returns status REJECTED', rejection.status === 'REJECTED')
+
+      const memoBState = await prisma.memo.findUniqueOrThrow({ where: { id: memoB.id } })
+      check('A rejected memo has its currentStepId cleared', memoBState.currentStepId === null)
+
+      const skippedStep = await prisma.workflowStep.findFirst({
+        where: { memoId: memoB.id, position: 2 },
+      })
+      check(
+        'The step that never got its turn is marked SKIPPED, not PENDING',
+        skippedStep?.state === 'SKIPPED',
+      )
+
+      await expectWorkflowError(
+        'Step 2 cannot act on a memo that was already rejected at step 1',
+        'INVALID_STATE',
+        () =>
+          performWorkflowAction(prisma, asActor(step2), {
+            memoId: memoB.id,
+            action: 'APPROVE',
+          }),
+      )
+
+      // --- 9c. Request changes -> resubmit: history survives the new cycle --
+
+      const memoC = await createMemo(
+        { ...authorActor, organizationSlug: org.slug },
+        {
+          subject: 'Scratch: sent back for changes',
+          bodyHtml: '<p>First draft, before the requested changes.</p>',
+          departmentId: null,
+          categoryId: null,
+          templateId: null,
+          priority: 'NORMAL',
+        },
+      )
+
+      await submitMemo(prisma, authorActor, {
+        memoId: memoC.id,
+        participants: [
+          { position: 1, assigneeId: step1.id, positionLabel: 'Dept. Head' },
+          { position: 2, assigneeId: step2.id, positionLabel: 'Finance' },
+        ],
+      })
+
+      const changeRequest = await performWorkflowAction(prisma, asActor(step1), {
+        memoId: memoC.id,
+        action: 'REQUEST_CHANGES',
+        comment: 'Add the vendor quote before this goes further.',
+      })
+      check(
+        'Requesting changes returns status CHANGES_REQUESTED',
+        changeRequest.status === 'CHANGES_REQUESTED',
+      )
+
+      const cycleAfterRequest = (
+        await prisma.memo.findUniqueOrThrow({ where: { id: memoC.id } })
+      ).submissionCycle
+
+      await updateMemo(authorActor, memoC.id, {
+        subject: 'Scratch: sent back for changes (revised)',
+        bodyHtml: '<p>Revised: vendor quote attached as described.</p>',
+        departmentId: null,
+        categoryId: null,
+        priority: 'NORMAL',
+      })
+
+      const resubmitResult = await resubmitMemo(prisma, authorActor, { memoId: memoC.id })
+      check(
+        'Resubmitting increments the submission cycle',
+        resubmitResult.cycle === cycleAfterRequest + 1,
+      )
+
+      const memoCState = await prisma.memo.findUniqueOrThrow({ where: { id: memoC.id } })
+      check(
+        'Resubmission restarts at position 1 of the new cycle',
+        memoCState.status === 'PENDING_APPROVAL' && memoCState.currentStepId !== null,
+      )
+
+      const priorCycleSteps = await prisma.workflowStep.findMany({
+        where: { memoId: memoC.id, submissionCycle: cycleAfterRequest },
+      })
+      check(
+        "The PREVIOUS cycle's step rows are untouched by the resubmission",
+        priorCycleSteps.length === 2 &&
+          priorCycleSteps.find((s) => s.position === 1)?.state === 'COMPLETED',
+      )
+
+      const requestChangesStillOnFile = await prisma.workflowAction.count({
+        where: { memoId: memoC.id, action: 'REQUEST_CHANGES' },
+      })
+      check(
+        'The REQUEST_CHANGES decision from the first cycle is still on the record',
+        requestChangesStillOnFile === 1,
+      )
+
+      // Finish this one off too: approve both steps of the new cycle.
+      await performWorkflowAction(prisma, asActor(step1), { memoId: memoC.id, action: 'APPROVE' })
+      const memoCFinal = await performWorkflowAction(prisma, asActor(step2), {
+        memoId: memoC.id,
+        action: 'APPROVE',
+      })
+      check(
+        'The revised memo can still reach APPROVED after resubmission',
+        memoCFinal.status === 'APPROVED',
+      )
+
+      const totalActionsOnC = await prisma.workflowAction.count({ where: { memoId: memoC.id } })
+      check(
+        'Both submission cycles of memo C are represented in its action history',
+        totalActionsOnC >= 3, // REQUEST_CHANGES + 2x APPROVE, at minimum
+        totalActionsOnC + ' actions total',
+      )
+
+      // --- 9d. Cancellation ---------------------------------------------------
+
+      const memoD = await createMemo(
+        { ...authorActor, organizationSlug: org.slug },
+        {
+          subject: 'Scratch: withdrawn by its author',
+          bodyHtml: '<p>Submitted, then cancelled.</p>',
+          departmentId: null,
+          categoryId: null,
+          templateId: null,
+          priority: 'NORMAL',
+        },
+      )
+
+      await submitMemo(prisma, authorActor, {
+        memoId: memoD.id,
+        participants: [{ position: 1, assigneeId: step1.id, positionLabel: 'Dept. Head' }],
+      })
+
+      const cancelResult = await cancelMemo(prisma, authorActor, memoD.id)
+      check('Cancelling returns status CANCELLED', cancelResult.status === 'CANCELLED')
+
+      await expectWorkflowError(
+        'A cancelled memo accepts no further workflow action',
+        'INVALID_STATE',
+        () =>
+          performWorkflowAction(prisma, asActor(step1), {
+            memoId: memoD.id,
+            action: 'APPROVE',
+          }),
+      )
+    } finally {
+      // Cascades: every department, user, memo, step, action, version,
+      // comment, attachment, notification and audit row this organization
+      // owns is removed with it. The seeded demo data is never touched.
+      await prisma.organization.delete({ where: { id: scratchOrgId } })
+    }
   }
 
   console.log('\n' + '-'.repeat(64))
