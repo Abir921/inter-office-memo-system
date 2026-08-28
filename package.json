@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@prisma/client": "6.19.3",
+    "@react-pdf/renderer": "4.9.0",
     "@supabase/supabase-js": "^2.112.4",
     "@tiptap/pm": "^3.30.5",
     "@tiptap/react": "^3.30.5",

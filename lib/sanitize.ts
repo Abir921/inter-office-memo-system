@@ -102,3 +102,26 @@ export function toPlainText(html: string): string {
 export function isEffectivelyEmpty(html: string): boolean {
   return toPlainText(html).length === 0
 }
+
+/**
+ * Plain-text paragraphs, block boundaries preserved as breaks between array
+ * entries. Used by the PDF export, which has no HTML renderer of its own and
+ * needs to lay text out as paragraphs rather than one unbroken line.
+ */
+export function toParagraphs(html: string): string[] {
+  const withBreaks = html
+    .replace(/<\/(p|h1|h2|h3|li|blockquote|tr)>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+  const plain = sanitizeHtml(withBreaks, { allowedTags: [], allowedAttributes: {} })
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+
+  return plain
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .filter((line) => line.length > 0)
+}

@@ -8,6 +8,7 @@ import { CancelMemoButton } from '@/components/app/cancel-memo-button'
 import { CommentForm } from '@/components/app/comment-form'
 import { RoutingRail, type RailStep } from '@/components/app/routing-rail'
 import { PriorityChip, StatusBadge } from '@/components/app/status-badge'
+import { VersionHistory } from '@/components/app/version-history'
 import { getSessionUser, isAdmin } from '@/lib/auth'
 import { stamp } from '@/lib/format'
 import { MEMO_DETAIL_INCLUDE } from '@/lib/memo'
@@ -60,7 +61,7 @@ export default async function MemoDetailPage({
 
   if (!memo) notFound()
 
-  const [steps, actions, comments, attachments, cycleCount] = await Promise.all([
+  const [steps, actions, comments, attachments, cycleCount, versions] = await Promise.all([
     db.step.findMany({
       where: { memoId: memo.id, submissionCycle: memo.submissionCycle },
       orderBy: { position: 'asc' },
@@ -88,6 +89,11 @@ export default async function MemoDetailPage({
       where: { memoId: memo.id },
       distinct: ['submissionCycle'],
       select: { submissionCycle: true },
+    }),
+    db.version.findMany({
+      where: { memoId: memo.id },
+      orderBy: { versionNumber: 'asc' },
+      include: { editedBy: { select: { id: true, name: true } } },
     }),
   ])
 
@@ -251,19 +257,23 @@ export default async function MemoDetailPage({
           ) : null}
         </dl>
 
-        {canEdit || canCancel ? (
-          <div className="mt-5 flex flex-wrap items-center gap-3">
-            {canEdit ? (
-              <Link
-                href={'/memos/' + memo.id + '/edit'}
-                className="inline-flex h-9 items-center rounded-sm border border-rule bg-card px-4 text-sm font-medium text-ink hover:bg-wash"
-              >
-                {memo.status === 'DRAFT' ? 'Edit draft' : 'Revise and resubmit'}
-              </Link>
-            ) : null}
-            {canCancel ? <CancelMemoButton memoId={memo.id} /> : null}
-          </div>
-        ) : null}
+        <div className="mt-5 flex flex-wrap items-center gap-3">
+          <a
+            href={'/api/memos/' + memo.id + '/export-pdf'}
+            className="inline-flex h-9 items-center rounded-sm border border-rule bg-card px-4 text-sm font-medium text-ink hover:bg-wash"
+          >
+            Export PDF
+          </a>
+          {canEdit ? (
+            <Link
+              href={'/memos/' + memo.id + '/edit'}
+              className="inline-flex h-9 items-center rounded-sm border border-rule bg-card px-4 text-sm font-medium text-ink hover:bg-wash"
+            >
+              {memo.status === 'DRAFT' ? 'Edit draft' : 'Revise and resubmit'}
+            </Link>
+          ) : null}
+          {canCancel ? <CancelMemoButton memoId={memo.id} /> : null}
+        </div>
       </header>
 
       {/* ---- Action panel: rendered ONLY for the current step's assignee.
@@ -307,6 +317,8 @@ export default async function MemoDetailPage({
           />
         </div>
       </section>
+
+      <VersionHistory versions={versions} />
 
       {/* ---- Chronological record ---- */}
       <section>

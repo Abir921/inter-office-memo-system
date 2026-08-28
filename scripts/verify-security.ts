@@ -140,6 +140,8 @@ async function verifyHttpAuthorizationBoundary(opts: {
   userEmail: string
   password: string
   organizationId: string
+  /** An APPROVED memo in this organization, for the PDF export check. */
+  approvedMemoId: string
 }) {
   const label = (s: string) => '[HTTP] ' + s
 
@@ -201,6 +203,66 @@ async function verifyHttpAuthorizationBoundary(opts: {
       label('the same route accepts the same request from an admin session'),
       asAdmin.status === 201,
       'got ' + asAdmin.status,
+    )
+
+    // Templates: same admin-only boundary, different route.
+    const templateAsUser = await jarFetch(userJar, HTTP_BASE + '/api/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Should Not Exist', steps: [{ position: 1, positionLabel: 'X' }] }),
+    })
+    check(
+      label('a non-admin session gets 403 from POST /api/templates'),
+      templateAsUser.status === 403,
+      'got ' + templateAsUser.status,
+    )
+
+    const templateAsAdmin = await jarFetch(adminJar, HTTP_BASE + '/api/templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Scratch HTTP Template',
+        steps: [{ position: 1, positionLabel: 'Reviewer' }],
+      }),
+    })
+    check(
+      label('the same route accepts the same request from an admin session (templates)'),
+      templateAsAdmin.status === 201,
+      'got ' + templateAsAdmin.status,
+    )
+
+    // Reports: admin-only, aggregate data.
+    const reportsAsUser = await jarFetch(userJar, HTTP_BASE + '/api/reports')
+    check(
+      label('a non-admin session gets 403 from GET /api/reports'),
+      reportsAsUser.status === 403,
+      'got ' + reportsAsUser.status,
+    )
+
+    const reportsAsAdmin = await jarFetch(adminJar, HTTP_BASE + '/api/reports')
+    const reportsBody = reportsAsAdmin.ok
+      ? ((await reportsAsAdmin.json()) as { totalMemos: number })
+      : null
+    check(
+      label('an admin session gets a real report from GET /api/reports'),
+      reportsAsAdmin.status === 200 && (reportsBody?.totalMemos ?? 0) > 0,
+      'status ' + reportsAsAdmin.status + ', totalMemos ' + (reportsBody?.totalMemos ?? 'n/a'),
+    )
+
+    // PDF export: any participant may export, not just admins — this is
+    // visibility-scoped (same rule as the memo detail page), not role-gated.
+    const pdfResponse = await jarFetch(
+      userJar,
+      HTTP_BASE + '/api/memos/' + opts.approvedMemoId + '/export-pdf',
+    )
+    const pdfBytes = pdfResponse.ok ? new Uint8Array(await pdfResponse.arrayBuffer()) : null
+    const isPdf = pdfBytes !== null && pdfBytes.length > 4 && String.fromCharCode(...pdfBytes.slice(0, 5)) === '%PDF-'
+    check(
+      label('the author can export an approved memo as a real PDF'),
+      pdfResponse.status === 200 &&
+        pdfResponse.headers.get('content-type') === 'application/pdf' &&
+        isPdf,
+      'status ' + pdfResponse.status + ', bytes ' + (pdfBytes?.length ?? 0),
     )
   } catch (error) {
     check(label('admin routes over real HTTP'), false, 'unexpected error: ' + String(error))
@@ -1125,6 +1187,7 @@ async function main() {
         userEmail: author.email,
         password: 'ScratchPassw0rd!',
         organizationId: scratchOrgId,
+        approvedMemoId: memoA.id,
       })
     } finally {
       // Cascades: every department, user, memo, step, action, version,
