@@ -22,6 +22,15 @@ export const updateDepartmentSchema = createDepartmentSchema.extend({
   isActive: z.boolean(),
 })
 
+export const createCategorySchema = z.object({
+  name: z.string().trim().min(2, 'Enter a category name.').max(120),
+  description: z.string().trim().max(300).optional().or(z.literal('')),
+})
+
+export const updateCategorySchema = createCategorySchema.extend({
+  isActive: z.boolean(),
+})
+
 const password = z.string().min(8, 'Use at least 8 characters.').max(72)
 
 export const createUserSchema = z.object({

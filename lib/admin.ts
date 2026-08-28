@@ -132,6 +132,81 @@ export async function updateDepartment(
 }
 
 // ---------------------------------------------------------------------------
+// Memo categories
+// ---------------------------------------------------------------------------
+
+export interface CategoryInput {
+  name: string
+  description: string | null
+}
+
+export async function createCategory(ctx: TenantContext, input: CategoryInput) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const category = await tx.memoCategory.create({
+        data: { organizationId: ctx.organizationId, ...input },
+      })
+
+      await writeAudit(tx, {
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+        eventType: AuditEventType.CATEGORY_CREATED,
+        entityType: 'MemoCategory',
+        entityId: category.id,
+        description: 'Category "' + category.name + '" created.',
+      })
+
+      return category
+    })
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new AdminError(409, 'A category with that name already exists.', {
+        name: 'A category with that name already exists.',
+      })
+    }
+    throw error
+  }
+}
+
+export async function updateCategory(
+  ctx: TenantContext,
+  id: string,
+  input: CategoryInput & { isActive: boolean },
+) {
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const existing = await tx.memoCategory.findFirst({
+        where: { id, organizationId: ctx.organizationId },
+      })
+      if (!existing) throw new AdminError(404, 'Category not found.')
+
+      const category = await tx.memoCategory.update({ where: { id }, data: input })
+
+      await writeAudit(tx, {
+        organizationId: ctx.organizationId,
+        userId: ctx.userId,
+        eventType: AuditEventType.CATEGORY_UPDATED,
+        entityType: 'MemoCategory',
+        entityId: category.id,
+        description:
+          existing.isActive && !input.isActive
+            ? 'Category "' + category.name + '" deactivated.'
+            : 'Category "' + category.name + '" updated.',
+      })
+
+      return category
+    })
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      throw new AdminError(409, 'A category with that name already exists.', {
+        name: 'A category with that name already exists.',
+      })
+    }
+    throw error
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Users
 // ---------------------------------------------------------------------------
 

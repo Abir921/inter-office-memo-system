@@ -1,6 +1,6 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
-import { DepartmentManager } from '@/components/app/department-manager'
+import { NamedListManager } from '@/components/app/named-list-manager'
 import { getSessionUser, isAdmin } from '@/lib/auth'
 import { scoped, tenantContext } from '@/lib/tenant'
 
@@ -27,7 +27,13 @@ export default async function DepartmentsPage() {
         <h1 className="mt-2 text-2xl">Departments</h1>
       </header>
 
-      <DepartmentManager departments={departments} />
+      <NamedListManager
+        items={departments}
+        apiBasePath="/api/departments"
+        singular="department"
+        emptyMessage="No active departments yet."
+        inactiveHint="Deactivating preserves the memos and users already linked to a department."
+      />
     </div>
   )
 }
