@@ -23,7 +23,7 @@ function Stat({
   tone,
 }: {
   label: string
-  value: number
+  value: React.ReactNode
   href?: string
   tone?: 'stamp' | 'seal' | 'pending'
 }) {
@@ -121,6 +121,7 @@ export default async function DashboardPage() {
         db.memo.count({ status: { in: ACTIVE } }),
         db.memo.count({ status: MemoStatus.APPROVED }),
         db.memo.count({ status: MemoStatus.REJECTED }),
+        db.user.count(),
       ])
     : null
 
@@ -248,7 +249,16 @@ export default async function DashboardPage() {
           <h2 className="text-sm font-semibold">{user.organizationName}</h2>
           <p className="mt-1 text-xs text-muted">Visible to administrators.</p>
           <div className="mt-3 grid grid-cols-2 gap-px overflow-hidden rounded-sm border border-rule bg-rule sm:grid-cols-3 lg:grid-cols-6">
-            <Stat label="Active users" value={orgStats[0]} href="/admin/users" />
+            <Stat
+              label="Active users"
+              value={
+                <>
+                  {orgStats[0]}
+                  <span className="text-base text-muted"> / {orgStats[6]}</span>
+                </>
+              }
+              href="/admin/users"
+            />
             <Stat label="Departments" value={orgStats[1]} href="/admin/departments" />
             <Stat label="Memos, all time" value={orgStats[2]} />
             <Stat label="In progress" value={orgStats[3]} />

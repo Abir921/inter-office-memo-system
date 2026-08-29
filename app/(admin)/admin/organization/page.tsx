@@ -15,10 +15,11 @@ export default async function OrganizationSettingsPage() {
   if (!isAdmin(user)) redirect('/dashboard')
 
   const db = scoped(tenantContext(user))
-  const [org, departmentCount, activeUserCount, memoCount] = await Promise.all([
+  const [org, departmentCount, activeUserCount, totalUserCount, memoCount] = await Promise.all([
     db.organization.get(),
     db.department.count({ isActive: true }),
     db.user.count({ status: 'ACTIVE' }),
+    db.user.count(),
     db.memo.count(),
   ])
 
@@ -40,7 +41,10 @@ export default async function OrganizationSettingsPage() {
         </div>
         <div className="bg-card p-4">
           <dt className="text-xs text-muted">Active users</dt>
-          <dd className="font-data mt-1 text-xl text-ink">{activeUserCount}</dd>
+          <dd className="font-data mt-1 text-xl text-ink">
+            {activeUserCount}
+            <span className="text-sm text-muted"> / {totalUserCount}</span>
+          </dd>
         </div>
         <div className="bg-card p-4">
           <dt className="text-xs text-muted">Memos, all time</dt>
