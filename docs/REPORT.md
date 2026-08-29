@@ -30,7 +30,7 @@ fails:
    act, and only in order.
 3. **Server-side authorization** — hiding a UI element is not authorization.
 
-Section 9 of this report shows how each was verified, not just implemented.
+Section 10 of this report shows how each was verified, not just implemented.
 
 ---
 
@@ -84,7 +84,7 @@ first"*).
 | 11 | Notifications | ✅ in-app, unread count, mark read |
 | 12 | Search and filtering respects authorization | ✅ shares the same scoping as every other list |
 | 13 | Administrative functionality | ✅ departments, users, categories, templates, reports, audit |
-| 14 | **Cross-tenant denial** | ✅ verified both automatically and against the live deploy (§9) |
+| 14 | **Cross-tenant denial** | ✅ verified both automatically and against the live deploy (§10) |
 
 ---
 
@@ -154,7 +154,7 @@ protected page load before being sent to `/login`. The real check is
 `getSessionUser()` / `requireSession()` / `requireAdmin()`, called again at
 the top of every page and every route handler, independent of whatever
 middleware decided. This split is deliberate and is exercised directly in
-§9 below: a non-admin session hitting an admin API route over real HTTP —
+§10 below: a non-admin session hitting an admin API route over real HTTP —
 past whatever middleware did — still gets a 403 from the handler itself.
 
 ---
@@ -304,7 +304,7 @@ a colleague's ad-hoc script — to trip over; cleaning on the way in means the
 stored value is already the safe value. The allowlist matches exactly what
 the Tiptap editor can produce; anything else, including `<script>`,
 `<iframe>`, `<svg onload>`, `javascript:` links, and `data:text/html` URIs,
-is stripped entirely rather than escaped. §9 lists the 12 payloads verified
+is stripped entirely rather than escaped. §10 lists the 12 payloads verified
 against this.
 
 ### Attachments
@@ -380,7 +380,60 @@ fragile HTML-to-PDF converter.
 
 ---
 
-## 9. Verification — not just written, checked
+## 9. Performance, and a Bug That Only Existed in Production
+
+Two rounds of hardening happened after the initial feature-complete build,
+both triggered by manually testing the live deployment rather than trusting
+that "works locally" meant "works":
+
+**Performance.** The Vercel function was running in `iad1` (Washington,
+D.C.) while Neon ran in `ap-southeast-1` (Singapore) — measured, a bare
+`SELECT COUNT(*)` took **1161ms**, paid on every query, on every page.
+`vercel.json` now pins the function to `sin1`, matching the database;
+the same query dropped to **10ms**. Separately, `getSessionUser()` was
+running two to three times per page load (layout, page, and sometimes a
+route handler each asked independently), each time re-querying the user and
+their organization — six round trips to answer one question. Wrapped in
+React's `cache()` so it runs once per request; the security property is
+unchanged, since the database is still consulted on every request, just
+once instead of three times. Fourteen `loading.tsx` files were added across
+the busiest routes — Next.js holds a navigation's URL change until the
+destination has something to render, so without a loading state a slow
+query made a click look like it had done nothing.
+
+**A 500 that never once reproduced locally.** PDF export failed on the live
+deployment with a generic `{"error":"Something went wrong."}`, while
+working in `next dev`, and — checked specifically, since dev mode never
+bundles route handlers — in a real `next build && next start` too. Two
+plausible-sounding fixes were tried and *disproven*, not just tried: a
+suspected webpack module-resolution issue, ruled out with a negative-control
+rebuild (config reverted, same build, still worked locally, so whatever was
+different was not reproducible outside Vercel); then a broad
+`outputFileTracingIncludes` rule, deployed and retested against the live
+URL, which still failed. Rather than guess a third time, a narrowly-scoped
+temporary diagnostic (`?diag=1`, gated behind the same visibility check
+every other caller of the route already passes) was added to the live
+route to surface the *actual* error, then removed once it had done its job:
+
+```
+Cannot find module '/var/task/node_modules/pdfkit/js/standard-fonts/Helvetica.cjs'
+```
+
+`pdfkit` — the library `@react-pdf/renderer` uses internally to stream PDF
+bytes — loads its standard-14 font data via a dynamic `require()` at render
+time. Vercel's file-tracer (`@vercel/nft`) statically analyses each route to
+decide what ships in its deployed bundle, cannot see a dynamic require, and
+silently dropped the directory. This class of bug is invisible to any local
+test by construction: `next start` always has the complete local
+`node_modules` on disk regardless of what a tracer would have kept, so
+"it works when I run it" proved nothing here. `pdfkit` was added to
+`serverExternalPackages` and `outputFileTracingIncludes` for that one route;
+confirmed fixed by exporting the same memo on the live URL and checking the
+response for real `%PDF-` magic bytes, not just a 200 status.
+
+---
+
+## 10. Verification — not just written, checked
 
 `npm run verify` (`scripts/verify-security.ts`) is an automated script, run
 against the real seeded database, proving the three non-negotiable
@@ -433,7 +486,7 @@ pasted a Northwind memo URL, received a 404.
 
 ---
 
-## 10. The Vibe-Coding Process
+## 11. The Vibe-Coding Process
 
 This project was built end-to-end in conversation with Claude Code, working
 from the pre-written `CLAUDE.md`, `docs/PRD.md`, `prisma/schema.prisma`, and
@@ -493,7 +546,7 @@ the git history (`git log`) is itself part of this development record.
 
 ---
 
-## 11. Known Limitations
+## 12. Known Limitations
 
 Stated plainly rather than left to be discovered:
 
@@ -503,7 +556,8 @@ Stated plainly rather than left to be discovered:
   turn-check already accounts for an active delegate — but there is no UI to
   create one.
 - **PDF export renders plain paragraphs**, not the memo's original rich-text
-  formatting (§8).
+  formatting (§8), and the Vercel-only bundling bug (§9) is fixed, not a
+  standing limitation.
 - **CSP allows `'unsafe-inline'` for scripts and styles.** A nonce-based
   policy would close this further but needs the nonce threaded through
   middleware into every response — not done given the timeline.
@@ -522,7 +576,7 @@ Stated plainly rather than left to be discovered:
 
 ---
 
-## 12. Deployment
+## 13. Deployment
 
 - **Hosting**: Vercel, auto-deploying on every push to `main`. Environment
   variable changes require an explicit redeploy — Vercel bakes them in at
@@ -540,7 +594,7 @@ Stated plainly rather than left to be discovered:
   credential value.
 - **Local setup**: see [`README.md`](../README.md) for the full command
   sequence, the Prisma 6.19.3 pin, and the environment-variable pollution
-  fix described in §10.
+  fix described in §11.
 
 ### Demonstration credentials
 
