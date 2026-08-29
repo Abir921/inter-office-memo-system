@@ -38,33 +38,30 @@ const SECURITY_HEADERS = [
 ]
 
 const nextConfig: NextConfig = {
-  // GET /api/memos/:id/export-pdf 500s on Vercel while working in every local
-  // test — including a real `next build && next start`, checked with a
-  // negative-control rebuild (same build, config reverted) that also
-  // succeeded locally. That rules out a webpack module-resolution bug
-  // (the first suspect, since @react-pdf/renderer ships a `browser` field
-  // that bundlers can mis-resolve even for a Node-runtime route) as something
-  // reproducible outside Vercel itself — it may still be a contributing
-  // factor there, since local `next start` runs against the full local
-  // node_modules and can't observe how the package resolves once bundled.
-  // Kept as a low-risk, standard mitigation: forces Next to require() the
-  // package directly from node_modules rather than running it through
-  // webpack at all, which removes that resolution step from the picture
-  // regardless of whether it was the actual cause here.
-  serverExternalPackages: ['@react-pdf/renderer', 'fontkit', 'yoga-layout'],
+  // GET /api/memos/:id/export-pdf 500s on Vercel, confirmed and root-caused
+  // via a temporary diagnostic (removed once this fix was confirmed):
+  //
+  //   Cannot find module '/var/task/node_modules/pdfkit/js/standard-fonts/Helvetica.cjs'
+  //
+  // pdfkit — the library @react-pdf/renderer uses internally to stream PDF
+  // bytes — loads its "standard 14" font data (Helvetica, Times, Courier,
+  // exactly the fonts lib/pdf.tsx uses, chosen specifically to avoid needing
+  // any external font file) via a dynamic require() at render time. Vercel's
+  // file-tracer (@vercel/nft) statically analyses each route to decide which
+  // files ship in its deployed bundle, cannot see a dynamic require, and
+  // silently drops the whole directory. This never reproduces locally —
+  // `next build && next start` always has the complete local node_modules
+  // available, tracer or no tracer — which is exactly why the first two
+  // attempts here (serverExternalPackages, then a broader
+  // outputFileTracingIncludes that missed pdfkit specifically, since it is a
+  // dependency of @react-pdf/renderer rather than a direct one) both passed
+  // every local test and still failed on the real deployment.
+  serverExternalPackages: ['@react-pdf/renderer', 'pdfkit', 'fontkit', 'yoga-layout'],
 
-  // Belt and braces on top of serverExternalPackages: Vercel's own file-trace
-  // step (@vercel/nft) decides which files actually ship in the deployed
-  // function bundle, and only runs on Vercel — never in a local `next build`.
-  // A local production build succeeding proves nothing about whether nft's
-  // static analysis correctly followed every file @react-pdf/renderer's
-  // dependency chain touches at runtime (fontkit and yoga-layout both do
-  // dynamic, not statically-analysable, requires internally). This forces
-  // the whole package directories into the bundle regardless of what the
-  // tracer's static analysis catches on its own.
   outputFileTracingIncludes: {
     '/api/memos/[id]/export-pdf': [
       './node_modules/@react-pdf/**/*',
+      './node_modules/pdfkit/**/*',
       './node_modules/fontkit/**/*',
       './node_modules/yoga-layout/**/*',
     ],
