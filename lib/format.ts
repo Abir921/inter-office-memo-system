@@ -29,10 +29,18 @@ export function stamp(date: Date | string | null | undefined): string {
 }
 
 /** Date only: "27 Aug 2026". */
-export function stampDate(date: Date | string | null | undefined): string {
+export function stampDate(
+  date: Date | string | null | undefined,
+  opts: { utc?: boolean } = {},
+): string {
   if (!date) return '—'
   const d = typeof date === 'string' ? new Date(date) : date
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+  return d.toLocaleDateString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    ...(opts.utc ? { timeZone: 'UTC' } : {}),
+  })
 }
 
 export function fileSize(bytes: number): string {

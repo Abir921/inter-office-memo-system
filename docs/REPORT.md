@@ -37,9 +37,10 @@ Section 10 of this report shows how each was verified, not just implemented.
 ## 2. Requirements Implemented
 
 Traceability against `docs/PRD.md` §15. Everything marked P0 shipped; all
-listed P1 items shipped; P2 (delegation, email delivery) was deferred per the
-PRD's own fallback plan (§14: *"if time runs short, drop delegation and email
-first"*).
+listed P1 items shipped. Of the two P2 items the PRD's own fallback plan
+(§14: *"if time runs short, drop delegation and email first"*) named for
+dropping first, delegation was built before submission; email delivery for
+notifications was not.
 
 | Area | Priority | Status |
 |---|---|---|
@@ -64,7 +65,7 @@ first"*).
 | PDF export | P1 | ✅ |
 | Memo versioning | P1 | ✅ |
 | Audit log (admin viewer) | P1 | ✅ |
-| Delegation | P2 | ❌ deferred |
+| Delegation | P2 | ✅ |
 | Email notifications | P2 | ❌ deferred |
 
 ### Acceptance criteria (PRD §12 / spec §28)
@@ -550,11 +551,14 @@ the git history (`git log`) is itself part of this development record.
 
 Stated plainly rather than left to be discovered:
 
-- **Delegation (P2) and email notifications (P2)** were not built, per the
-  PRD's own stated fallback when time runs short. The `Delegation` model and
-  `getActiveDelegatorIds()` exist in the schema and workflow engine — the
-  turn-check already accounts for an active delegate — but there is no UI to
-  create one.
+- **Email notifications (P2)** were not built, per the PRD's own stated
+  fallback when time runs short. In-app notifications cover the same events.
+  Delegation (also P2) was deferred through most of the build but was
+  finished before submission: a user can hand off their workflow authority
+  to a colleague for a date range from their profile page, the colleague
+  sees the delegator's pending items in their own Inbox, and every action
+  they take while covering is recorded as theirs, marked as acting on the
+  delegator's behalf (`WorkflowAction.actedOnBehalfOfId`).
 - **PDF export renders plain paragraphs**, not the memo's original rich-text
   formatting (§8), and the Vercel-only bundling bug (§9) is fixed, not a
   standing limitation.

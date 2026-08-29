@@ -23,6 +23,7 @@ import {
 } from '../lib/admin'
 import { addComment } from '../lib/comment'
 import { hashPassword } from '../lib/auth'
+import { cancelDelegation, createDelegation, DelegationError } from '../lib/delegation'
 import { LOGIN_LIMIT, PASSWORD_RESET_LIMIT, rateLimit } from '../lib/rate-limit'
 import { createMemo, deleteDraft, updateMemo } from '../lib/memo'
 import { resolveDownload } from '../lib/attachment'
@@ -1190,6 +1191,108 @@ async function main() {
         organizationId: scratchOrgId,
         approvedMemoId: memoA.id,
       })
+
+      // -----------------------------------------------------------------
+      console.log('\n9f. DELEGATION')
+      // -----------------------------------------------------------------
+
+      const delegatorCtx: TenantContext = {
+        organizationId: scratchOrgId,
+        userId: step2.id,
+        role: step2.role,
+      }
+
+      try {
+        await createDelegation(delegatorCtx, {
+          delegateId: step2.id,
+          startDate: new Date(Date.now() - 60_000).toISOString(),
+          endDate: new Date(Date.now() + 3_600_000).toISOString(),
+          reason: null,
+        })
+        check('Self-delegation is refused', false, 'it was allowed')
+      } catch (error) {
+        check('Self-delegation is refused', error instanceof DelegationError)
+      }
+
+      const delegation = await createDelegation(delegatorCtx, {
+        delegateId: step3.id,
+        startDate: new Date(Date.now() - 60_000).toISOString(),
+        endDate: new Date(Date.now() + 3_600_000).toISOString(),
+        reason: 'Scratch: covering for step2',
+      })
+      check('A delegation can be created', Boolean(delegation.id))
+
+      const memoE = await createMemo(
+        { ...authorActor, organizationSlug: org.slug },
+        {
+          subject: 'Scratch: delegated approval',
+          bodyHtml: '<p>Testing a delegate acting on the delegator\'s step.</p>',
+          departmentId: null,
+          categoryId: null,
+          templateId: null,
+          priority: 'NORMAL',
+        },
+      )
+      await submitMemo(prisma, authorActor, {
+        memoId: memoE.id,
+        participants: [{ position: 1, assigneeId: step2.id, positionLabel: 'Dept. Head' }],
+      })
+
+      const delegatedResult = await performWorkflowAction(prisma, asActor(step3), {
+        memoId: memoE.id,
+        action: 'APPROVE',
+      })
+      check(
+        "The delegate can act on the delegator's current step",
+        delegatedResult.status === 'APPROVED',
+      )
+
+      const delegatedAction = await prisma.workflowAction.findFirst({
+        where: { memoId: memoE.id, action: 'APPROVE' },
+      })
+      check(
+        'The recorded decision shows who actually decided, and on whose behalf',
+        delegatedAction?.actorId === step3.id && delegatedAction?.actedOnBehalfOfId === step2.id,
+      )
+
+      try {
+        await cancelDelegation(
+          { organizationId: scratchOrgId, userId: step4.id, role: step4.role },
+          delegation.id,
+        )
+        check("A non-owner, non-admin cannot cancel someone else's delegation", false, 'it was allowed')
+      } catch (error) {
+        check(
+          "A non-owner, non-admin cannot cancel someone else's delegation",
+          error instanceof DelegationError && error.httpStatus === 403,
+        )
+      }
+
+      try {
+        await cancelDelegation(
+          { organizationId: beacon.id, userId: sara.id, role: sara.role },
+          delegation.id,
+        )
+        check('A different organization cannot reach the delegation at all', false, 'it was allowed')
+      } catch (error) {
+        check(
+          'A different organization cannot reach the delegation at all',
+          error instanceof DelegationError && error.httpStatus === 404,
+        )
+      }
+
+      const cancelled = await cancelDelegation(delegatorCtx, delegation.id)
+      check('The delegator can cancel their own delegation', cancelled.status === 'CANCELLED')
+
+      try {
+        await cancelDelegation(delegatorCtx, delegation.id)
+        check('Cancelling an already-cancelled delegation is refused', false, 'it was allowed')
+      } catch (error) {
+        check(
+          'Cancelling an already-cancelled delegation is refused',
+          error instanceof DelegationError && error.httpStatus === 409,
+        )
+      }
     } finally {
       // Cascades: every department, user, memo, step, action, version,
       // comment, attachment, notification and audit row this organization

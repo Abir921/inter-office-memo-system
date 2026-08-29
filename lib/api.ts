@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server'
 import { ZodError } from 'zod'
 import { AdminError } from './admin'
 import { AuthError } from './auth'
+import { DelegationError } from './delegation'
 import { TemplateError } from './template'
 import { NotFoundError } from './tenant'
 import { WorkflowError } from './workflow'
@@ -63,7 +64,7 @@ export function toErrorResponse(error: unknown): NextResponse<ApiErrorBody> {
     return jsonError(error.httpStatus, error.message)
   }
 
-  if (error instanceof AdminError || error instanceof TemplateError) {
+  if (error instanceof AdminError || error instanceof TemplateError || error instanceof DelegationError) {
     return jsonError(error.httpStatus, error.message, error.fields)
   }
 

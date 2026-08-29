@@ -1,8 +1,11 @@
 import type { Metadata } from 'next'
 import { redirect } from 'next/navigation'
 import { ChangePasswordForm } from '@/components/app/change-password-form'
+import { DelegationManager, type DelegationRow } from '@/components/app/delegation-manager'
 import { ProfileForm } from '@/components/app/profile-form'
 import { getSessionUser } from '@/lib/auth'
+import { displayStatus, DELEGATION_LIST_INCLUDE } from '@/lib/delegation'
+import { scoped, tenantContext } from '@/lib/tenant'
 
 export const metadata: Metadata = { title: 'Your profile · Inter-Office Memo' }
 export const dynamic = 'force-dynamic'
@@ -10,6 +13,31 @@ export const dynamic = 'force-dynamic'
 export default async function ProfilePage() {
   const user = await getSessionUser()
   if (!user) redirect('/login')
+
+  const db = scoped(tenantContext(user))
+
+  const [delegationRows, colleagues] = await Promise.all([
+    db.delegation.findMany({
+      where: { OR: [{ delegatorId: user.id }, { delegateId: user.id }] },
+      orderBy: { createdAt: 'desc' },
+      include: DELEGATION_LIST_INCLUDE,
+    }),
+    db.user.findMany({
+      where: { status: 'ACTIVE', id: { not: user.id } },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, designation: true },
+    }),
+  ])
+
+  const delegations: DelegationRow[] = delegationRows.map((d) => ({
+    id: d.id,
+    startDate: d.startDate.toISOString(),
+    endDate: d.endDate.toISOString(),
+    reason: d.reason,
+    displayStatus: displayStatus(d),
+    delegator: d.delegator,
+    delegate: d.delegate,
+  }))
 
   return (
     <div className="max-w-lg space-y-10">
@@ -46,6 +74,22 @@ export default async function ProfilePage() {
         <h2 className="text-sm font-semibold">Password</h2>
         <div className="mt-3">
           <ChangePasswordForm />
+        </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold">Delegation</h2>
+        <p className="mt-1 text-xs text-muted">
+          While you are away, a colleague can act on the memos waiting for you. They see
+          those items in their own Inbox; every decision they make while covering for you is
+          still recorded as theirs, marked as acting on your behalf.
+        </p>
+        <div className="mt-3">
+          <DelegationManager
+            delegations={delegations}
+            colleagues={colleagues}
+            currentUserId={user.id}
+          />
         </div>
       </section>
     </div>
