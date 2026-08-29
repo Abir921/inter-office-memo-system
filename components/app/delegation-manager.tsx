@@ -1,7 +1,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
@@ -271,6 +271,18 @@ export function DelegationManager({
   currentUserId: string
 }) {
   const router = useRouter()
+
+  // The sidebar links straight to #delegation. The browser's own anchor
+  // jump fires before webfonts finish loading, and the resulting swap
+  // reflows the page and leaves the scroll short — so this scrolls once on
+  // mount and again once fonts have actually settled.
+  useEffect(() => {
+    if (window.location.hash !== '#delegation') return
+    const scrollToDelegation = () =>
+      document.getElementById('delegation')?.scrollIntoView({ block: 'start' })
+    scrollToDelegation()
+    document.fonts?.ready.then(scrollToDelegation)
+  }, [])
 
   const given = delegations.filter((d) => d.delegator.id === currentUserId)
   const received = delegations.filter((d) => d.delegate.id === currentUserId)

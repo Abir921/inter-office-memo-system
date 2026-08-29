@@ -77,7 +77,7 @@ export default async function ProfilePage() {
         </div>
       </section>
 
-      <section>
+      <section id="delegation" className="scroll-mt-20">
         <h2 className="text-sm font-semibold">Delegation</h2>
         <p className="mt-1 text-xs text-muted">
           While you are away, a colleague can act on the memos waiting for you. They see

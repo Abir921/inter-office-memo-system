@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
+  ArrowRightLeft,
   Building2,
   ClipboardList,
   FileText,
@@ -32,6 +33,7 @@ const MAIN = [
   { href: '/memos', label: 'My memos', icon: FileText },
   { href: '/completed', label: 'Completed', icon: ClipboardList },
   { href: '/search', label: 'Search', icon: Search },
+  { href: '/profile#delegation', label: 'Delegation', icon: ArrowRightLeft },
 ]
 
 const ADMIN = [
@@ -58,7 +60,8 @@ function NavLink({
   onNavigate?: () => void
 }) {
   const pathname = usePathname()
-  const active = pathname === href || pathname.startsWith(href + '/')
+  const path = href.split('#')[0]
+  const active = pathname === path || pathname.startsWith(path + '/')
 
   return (
     <Link
