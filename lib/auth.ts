@@ -6,6 +6,7 @@
 // Rule: `organizationId` originates HERE, from the session, and nowhere else.
 // If a request body or query string contains one, it is ignored.
 
+import { cache } from 'react'
 import { AuditEventType, Role, UserStatus, type User } from '@prisma/client'
 import NextAuth from 'next-auth'
 import Credentials from 'next-auth/providers/credentials'
@@ -154,8 +155,18 @@ export interface SessionUser extends Actor {
  * alone. A JWT is valid until it expires, so without this an administrator
  * could deactivate someone and they would keep working for the rest of the
  * day. One indexed primary-key lookup is worth that.
+ *
+ * Wrapped in React's cache() so that lookup happens ONCE per request no
+ * matter how many callers ask. The layout asks, the page asks, and a route
+ * handler may ask again — before this, that was three round trips to the
+ * database (six queries, since the organization is a relation) to answer the
+ * same question with the same answer. cache() is per-request and does not
+ * leak between users: a fresh cache is created for every server request.
+ *
+ * The security property is unchanged — the database is still consulted on
+ * every request, just once instead of three times.
  */
-export async function getSessionUser(): Promise<SessionUser | null> {
+async function loadSessionUser(): Promise<SessionUser | null> {
   const session = await auth()
   if (!session?.user?.id) return null
 
@@ -184,6 +195,16 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     mustChangePassword: user.mustChangePassword,
   }
 }
+
+/**
+ * cache() wraps the plain function above rather than taking a named function
+ * expression directly — passing a NAMED function expression as a call
+ * argument trips a parser edge case in the Next 15.5 / SWC toolchain used
+ * here (a syntax error at the next top-level export, misleadingly far from
+ * the real cause). An anonymous function or, as here, a reference to an
+ * already-declared one, avoids it.
+ */
+export const getSessionUser = cache(loadSessionUser)
 
 /** Route-handler guard. Throws a 401 when there is no valid session. */
 export async function requireSession(): Promise<SessionUser> {
