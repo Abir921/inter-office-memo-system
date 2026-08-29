@@ -8,6 +8,11 @@
    --------------------------------------------------------------------------- */
 
 :root {
+  /* This app is deliberately single-theme: the paper routing slip. Declaring
+     the scheme stops the browser from dark-ifying form controls, scrollbars
+     and the canvas behind the page for anyone whose OS is set to dark mode. */
+  color-scheme: light;
+
   --ink: #16202b;       /* primary text, headers                */
   --paper: #fbfaf7;     /* app background                       */
   --rule: #d8d3c7;      /* hairlines, dividers, table borders   */
