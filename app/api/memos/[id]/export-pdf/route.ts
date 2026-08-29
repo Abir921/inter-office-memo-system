@@ -103,7 +103,32 @@ export const GET = handler(
       exportedAt: new Date(),
     }
 
-    const buffer = await renderToBuffer(MemoPdfDocument(pdfData))
+    let buffer: Buffer
+    try {
+      buffer = await renderToBuffer(MemoPdfDocument(pdfData))
+    } catch (error) {
+      // TEMPORARY — diagnosing a production-only 500 that will not reproduce
+      // locally (a real `next build && next start` succeeds; only the
+      // deployed Vercel build fails). Detail is returned ONLY when the caller
+      // adds ?diag=1, and only after the same visibility check every other
+      // caller of this route already passed (the 404 above) — this is not a
+      // new hole, it is one extra field on a response only someone who could
+      // already read this memo can request. Revert once the real cause is
+      // found: this file should return to calling renderToBuffer directly.
+      if (new URL(_request.url).searchParams.get('diag') === '1') {
+        return NextResponse.json(
+          {
+            error: 'PDF rendering failed.',
+            diagName: error instanceof Error ? error.name : typeof error,
+            diagMessage: error instanceof Error ? error.message : String(error),
+            diagStack:
+              error instanceof Error ? error.stack?.split('\n').slice(0, 8) : undefined,
+          },
+          { status: 500 },
+        )
+      }
+      throw error
+    }
 
     await writeAudit(prisma, {
       organizationId: ctx.organizationId,
