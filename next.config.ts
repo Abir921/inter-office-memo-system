@@ -38,6 +38,38 @@ const SECURITY_HEADERS = [
 ]
 
 const nextConfig: NextConfig = {
+  // GET /api/memos/:id/export-pdf 500s on Vercel while working in every local
+  // test — including a real `next build && next start`, checked with a
+  // negative-control rebuild (same build, config reverted) that also
+  // succeeded locally. That rules out a webpack module-resolution bug
+  // (the first suspect, since @react-pdf/renderer ships a `browser` field
+  // that bundlers can mis-resolve even for a Node-runtime route) as something
+  // reproducible outside Vercel itself — it may still be a contributing
+  // factor there, since local `next start` runs against the full local
+  // node_modules and can't observe how the package resolves once bundled.
+  // Kept as a low-risk, standard mitigation: forces Next to require() the
+  // package directly from node_modules rather than running it through
+  // webpack at all, which removes that resolution step from the picture
+  // regardless of whether it was the actual cause here.
+  serverExternalPackages: ['@react-pdf/renderer', 'fontkit', 'yoga-layout'],
+
+  // Belt and braces on top of serverExternalPackages: Vercel's own file-trace
+  // step (@vercel/nft) decides which files actually ship in the deployed
+  // function bundle, and only runs on Vercel — never in a local `next build`.
+  // A local production build succeeding proves nothing about whether nft's
+  // static analysis correctly followed every file @react-pdf/renderer's
+  // dependency chain touches at runtime (fontkit and yoga-layout both do
+  // dynamic, not statically-analysable, requires internally). This forces
+  // the whole package directories into the bundle regardless of what the
+  // tracer's static analysis catches on its own.
+  outputFileTracingIncludes: {
+    '/api/memos/[id]/export-pdf': [
+      './node_modules/@react-pdf/**/*',
+      './node_modules/fontkit/**/*',
+      './node_modules/yoga-layout/**/*',
+    ],
+  },
+
   async headers() {
     return [{ source: '/(.*)', headers: SECURITY_HEADERS }]
   },
