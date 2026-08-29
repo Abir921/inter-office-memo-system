@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { Input, PasswordInput } from '@/components/ui/input'
 import { loginAction, type LoginState } from './actions'
 
 const EMPTY: LoginState = {}
@@ -41,10 +41,9 @@ export function LoginForm() {
       </Field>
 
       <Field label="Password" htmlFor="password" error={state.fieldErrors?.password} required>
-        <Input
+        <PasswordInput
           id="password"
           name="password"
-          type="password"
           autoComplete="current-password"
           aria-invalid={Boolean(state.fieldErrors?.password)}
           required

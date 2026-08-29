@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/input'
 import { resetPasswordAction, type ResetPasswordState } from './actions'
 
 const EMPTY: ResetPasswordState = {}
@@ -34,10 +34,9 @@ export function ResetForm({ token }: { token: string }) {
         hint="At least 8 characters."
         required
       >
-        <Input
+        <PasswordInput
           id="newPassword"
           name="newPassword"
-          type="password"
           autoComplete="new-password"
           aria-invalid={Boolean(state.fieldErrors?.newPassword)}
           required
@@ -50,10 +49,9 @@ export function ResetForm({ token }: { token: string }) {
         error={state.fieldErrors?.confirmPassword}
         required
       >
-        <Input
+        <PasswordInput
           id="confirmPassword"
           name="confirmPassword"
-          type="password"
           autoComplete="new-password"
           aria-invalid={Boolean(state.fieldErrors?.confirmPassword)}
           required

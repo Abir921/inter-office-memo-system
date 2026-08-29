@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/input'
 
 export function ChangePasswordForm() {
   const [currentPassword, setCurrentPassword] = useState('')
@@ -65,9 +65,8 @@ export function ChangePasswordForm() {
         error={fieldErrors.currentPassword}
         required
       >
-        <Input
+        <PasswordInput
           id="current-password"
-          type="password"
           value={currentPassword}
           onChange={(e) => setCurrentPassword(e.target.value)}
           autoComplete="current-password"
@@ -83,9 +82,8 @@ export function ChangePasswordForm() {
           hint="At least 8 characters."
           required
         >
-          <Input
+          <PasswordInput
             id="new-password"
-            type="password"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             autoComplete="new-password"
@@ -99,9 +97,8 @@ export function ChangePasswordForm() {
           error={fieldErrors.confirmPassword}
           required
         >
-          <Input
+          <PasswordInput
             id="confirm-password"
-            type="password"
             value={confirmPassword}
             onChange={(e) => setConfirmPassword(e.target.value)}
             autoComplete="new-password"

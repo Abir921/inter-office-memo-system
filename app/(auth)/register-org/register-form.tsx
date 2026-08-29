@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { Alert } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field } from '@/components/ui/field'
-import { Input, Textarea } from '@/components/ui/input'
+import { Input, PasswordInput, Textarea } from '@/components/ui/input'
 import { registerOrgAction, type RegisterOrgState } from './actions'
 
 const EMPTY: RegisterOrgState = {}
@@ -127,10 +127,9 @@ export function RegisterForm() {
             hint="At least 8 characters."
             required
           >
-            <Input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               autoComplete="new-password"
               aria-invalid={Boolean(state.fieldErrors?.password)}
               required
@@ -143,10 +142,9 @@ export function RegisterForm() {
             error={state.fieldErrors?.confirmPassword}
             required
           >
-            <Input
+            <PasswordInput
               id="confirmPassword"
               name="confirmPassword"
-              type="password"
               autoComplete="new-password"
               aria-invalid={Boolean(state.fieldErrors?.confirmPassword)}
               required
